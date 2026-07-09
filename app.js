@@ -2,7 +2,8 @@
 // La LOGIQUE d'arrosage vit dans engine.js ; l'ACCÈS partagé dans store.js.
 // Ici : orchestration, cache localStorage (offline + affichage instantané), DOM.
 import { decide, DEFAULTS, CONSTANTS, addDays } from './engine.js';
-import { getArrosages, getReglages, upsertArrosage, patchReglages, purgeBefore } from './store.js';
+import { getArrosages, getReglages, upsertArrosage, patchReglages, purgeBefore, upsertSubscription } from './store.js';
+import { VAPID_PUBLIC } from './config.js';
 
 // --- Config météo ------------------------------------------------------
 const LAT = 46.2777, LON = 6.2234;
@@ -378,17 +379,85 @@ function initForm() {
 async function init() {
   loadCache();
   initForm();
+  initPush();
   render();                 // cache-first : affichage immédiat
   await Promise.all([loadWeather(), syncData()]);
   fillSettings();           // rafraîchit objectif/débit depuis Supabase
   render();
 }
 
-// Service worker : cache hors-ligne + (étape 4) réception des push.
+// Service worker : cache hors-ligne + réception des push.
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('[sw]', e.message));
   });
+}
+
+// --- Notifications push ------------------------------------------------
+const isStandalone = () =>
+  window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+function urlBase64ToUint8Array(base64) {
+  const pad = '='.repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(b64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+function initPush() {
+  const box = $('push-setting');
+  const btn = $('btn-push');
+  const hint = $('push-hint');
+  if (!box || !btn) return;
+
+  // iOS : le push n'existe QUE dans la PWA installée (mode standalone).
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if (!supported || !isStandalone()) { box.hidden = true; return; }
+  box.hidden = false;
+
+  if (!VAPID_PUBLIC || VAPID_PUBLIC.startsWith('COLLE_')) {
+    btn.disabled = true;
+    hint.textContent = 'Notifications pas encore configurées (clé VAPID manquante).';
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    btn.disabled = true;
+    hint.textContent = 'Notifications bloquées dans les réglages iOS de l\'app.';
+    return;
+  }
+  navigator.serviceWorker.ready.then((reg) => reg.pushManager.getSubscription()).then((sub) => {
+    if (sub) { btn.textContent = '🔔 Notifications activées'; btn.disabled = true; hint.textContent = 'Tu recevras un rappel le matin quand il faut arroser.'; }
+  }).catch(() => {});
+
+  btn.addEventListener('click', enablePush);
+}
+
+async function enablePush() {
+  const btn = $('btn-push');
+  const hint = $('push-hint');
+  btn.disabled = true;
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      hint.textContent = 'Permission refusée. Tu peux réessayer depuis les réglages iOS.';
+      btn.disabled = false;
+      return;
+    }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC),
+    });
+    await upsertSubscription(sub, getPrenom());
+    btn.textContent = '🔔 Notifications activées';
+    hint.textContent = 'Tu recevras un rappel le matin quand il faut arroser.';
+  } catch (e) {
+    console.warn('[push]', e.message);
+    hint.textContent = 'Échec de l\'activation. Réessaie dans un instant.';
+    btn.disabled = false;
+  }
 }
 
 // Re-synchro quand la page redevient visible (l'arrosage de l'autre apparaît).

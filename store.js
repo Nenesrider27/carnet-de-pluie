@@ -69,3 +69,31 @@ export async function purgeBefore(dateIso) {
   });
   await ok(res, 'purge arrosages');
 }
+
+// --- Abonnements push (étape 4) ---------------------------------------
+// Enregistre/rafraîchit l'abonnement push d'un appareil (clé = endpoint).
+export async function upsertSubscription(subscription, auteur) {
+  const res = await fetch(`${REST}/push_subscriptions`, {
+    method: 'POST',
+    headers: { ...headers(), Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({ endpoint: subscription.endpoint, subscription, auteur: auteur || null }),
+  });
+  await ok(res, 'upsert subscription');
+}
+
+// Liste tous les abonnements (utilisé par le script d'envoi côté serveur).
+export async function getSubscriptions() {
+  const res = await fetch(`${REST}/push_subscriptions?select=*`, {
+    headers: headers(), cache: 'no-store',
+  });
+  await ok(res, 'GET subscriptions');
+  return res.json();
+}
+
+// Supprime un abonnement mort (endpoint renvoyant 404/410).
+export async function deleteSubscription(endpoint) {
+  const res = await fetch(`${REST}/push_subscriptions?endpoint=eq.${encodeURIComponent(endpoint)}`, {
+    method: 'DELETE', headers: { ...headers(), Prefer: 'return=minimal' },
+  });
+  await ok(res, 'delete subscription');
+}

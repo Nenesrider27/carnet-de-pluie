@@ -1,0 +1,30 @@
+name: Rappel matinal d'arrosage
+
+# Deux créneaux UTC pour couvrir été (UTC+2) et hiver (UTC+1) : le script
+# ne fait quelque chose que si l'heure locale Europe/Zurich est 6h.
+on:
+  schedule:
+    - cron: '30 4 * * *'   # 6h30 en été (UTC+2)
+    - cron: '30 5 * * *'   # 6h30 en hiver (UTC+1)
+  workflow_dispatch:        # déclenchement manuel (test) — voir input FORCE
+    inputs:
+      force:
+        description: 'Forcer l envoi même hors 6h (1 = oui)'
+        required: false
+        default: '0'
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Installer web-push
+        run: npm install web-push@3
+      - name: Envoyer le rappel
+        env:
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: node scripts/morning-push.mjs
