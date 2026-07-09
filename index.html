@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0E141A" />
+  <meta name="color-scheme" content="dark" />
+  <title>Carnet de pluie — Anières</title>
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icon-192.png" type="image/png" />
+  <!-- iOS : ajout à l'écran d'accueil -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Carnet de pluie" />
+  <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+
+  <!-- Google Fonts (fallbacks système si hors-ligne) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Hanken+Grotesk:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="wrap">
+    <!-- Bandeaux d'état réseau -->
+    <div id="notice-offline" class="notice offline" role="status"></div>
+    <div id="notice-error" class="notice error" role="alert"></div>
+
+    <header>
+      <div class="wordmark">Carnet de pluie</div>
+      <div class="dateline">
+        <span id="dateToday">—</span> <span class="loc">· Anières</span>
+      </div>
+    </header>
+
+    <!-- HÉROS : le verdict du jour -->
+    <section id="verdict" class="verdict state-arroser" aria-live="polite">
+      <div class="icon" id="v-icon">💧</div>
+      <h1 class="title" id="v-title">…</h1>
+      <div class="subtitle" id="v-subtitle"></div>
+      <p class="why" id="v-why"></p>
+      <div class="readout" id="v-readout"></div>
+      <div class="tip" id="v-tip" hidden><span>🌅</span><span>Arrose tôt le matin ou en soirée.</span></div>
+      <div class="second" id="v-second" hidden></div>
+    </section>
+
+    <!-- Synchro visible : l'autre utilisateur a arrosé récemment -->
+    <div class="sync-note" id="sync-note" hidden></div>
+
+    <!-- Pourquoi (replié) -->
+    <details>
+      <summary>Pourquoi arroser comme ça&nbsp;?</summary>
+      <div class="details-body">
+        <p>L'idée&nbsp;: des racines <b>profondes</b> et résistantes à la sécheresse. On vise donc peu de sessions mais <b>copieuses</b>, plutôt qu'un petit arrosage tous les jours.</p>
+        <ol>
+          <li><b>Objectif hebdo</b>&nbsp;: on compte la pluie tombée (7&nbsp;j), la pluie prévue (3&nbsp;j) et ce qui a déjà été arrosé. Ce qui manque pour atteindre l'objectif, c'est le <b>déficit</b>.</li>
+          <li><b>Pluie annoncée</b>&nbsp;: s'il pleut ≥5&nbsp;mm sous 48&nbsp;h, on laisse faire le ciel — inutile d'arroser juste avant.</li>
+          <li><b>Espacement ~3 jours</b>&nbsp;: après un arrosage sérieux, le sol doit sécher en surface pour forcer les racines à descendre. On attend.</li>
+          <li><b>Sessions 10–20 mm</b>&nbsp;: en dessous de 10&nbsp;mm c'est superficiel (inutile), au-dessus de 20&nbsp;mm d'un coup ça ruisselle. Au-delà, on fractionne en deux sessions.</li>
+          <li><b>Sinon</b>&nbsp;: on arrose la durée qui comble le déficit, au débit du système.</li>
+        </ol>
+      </div>
+    </details>
+
+    <!-- J'ai arrosé -->
+    <section class="card">
+      <h2>J'ai arrosé</h2>
+      <div class="field-row">
+        <div class="field">
+          <label for="in-date">Jour</label>
+          <input type="date" id="in-date" />
+        </div>
+        <div class="field">
+          <label for="in-min">Minutes</label>
+          <input type="number" id="in-min" min="1" max="600" step="1" inputmode="numeric" placeholder="ex. 30" />
+        </div>
+        <button class="btn-primary" id="btn-save">Enregistrer</button>
+      </div>
+      <div class="week-line" id="week-line"></div>
+      <div class="save-feedback" id="save-feedback" role="status"></div>
+    </section>
+
+    <!-- Historique -->
+    <details>
+      <summary>Historique (14 derniers jours)</summary>
+      <div class="details-body">
+        <ul class="log-list" id="log-list"></ul>
+      </div>
+    </details>
+
+    <!-- Détail pluie -->
+    <details>
+      <summary>Détail pluie</summary>
+      <div class="details-body">
+        <div class="gauge" id="gauge" role="img" aria-label="Précipitations, 7 jours passés et 5 prévus"></div>
+        <div class="gauge-legend">
+          <span><i style="background:color-mix(in srgb,#6BA7DE 78%,#26313b)"></i>tombée</span>
+          <span><i style="background:repeating-linear-gradient(-45deg,#6BA7DE,#6BA7DE 3px,transparent 3px,transparent 6px)"></i>prévue&nbsp;(%&nbsp;=&nbsp;proba)</span>
+          <span><i style="background:#EDA53E"></i>aujourd'hui</span>
+        </div>
+      </div>
+    </details>
+
+    <!-- Réglages -->
+    <details>
+      <summary>Réglages</summary>
+      <div class="details-body">
+        <div class="setting">
+          <div class="field">
+            <label for="in-prenom">Ton prénom (auteur des arrosages)</label>
+            <input type="text" id="in-prenom" maxlength="20" placeholder="ex. Papa" />
+          </div>
+        </div>
+        <div class="setting">
+          <div class="field">
+            <label for="in-obj">Objectif hebdo (mm)</label>
+            <input type="number" id="in-obj" min="5" max="60" step="1" />
+          </div>
+          <p class="hint">Pic d'été&nbsp;: pelouse ~25–30&nbsp;mm, potager en fructification ~28–35&nbsp;mm, massifs/arbustes établis ~15–20&nbsp;mm. 28 = repère mixte pelouse+potager.</p>
+        </div>
+        <div class="setting">
+          <div class="field">
+            <label for="in-debit">Débit système (mm/h)</label>
+            <input type="number" id="in-debit" min="5" max="80" step="1" />
+          </div>
+          <p class="hint">Estimé depuis une mesure réelle (50&nbsp;ml en 25&nbsp;min dans une ouverture de ~7–8&nbsp;cm) — 1&nbsp;seul point de mesure sur un système mixte, précision ±20–30&nbsp;%. Modifiable.</p>
+        </div>
+        <button class="btn-primary" id="btn-reglages" style="margin-top:6px">Enregistrer les réglages</button>
+        <div class="save-feedback" id="reglages-feedback" role="status"></div>
+      </div>
+    </details>
+
+    <div class="synced" id="synced"></div>
+
+    <footer>
+      Données&nbsp;: MétéoSuisse (ICON&nbsp;CH2, 2&nbsp;km) via Open-Meteo · Anières<br />
+      Arrosage manuel — pas de connexion au système.
+    </footer>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

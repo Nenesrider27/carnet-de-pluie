@@ -1,0 +1,11 @@
+{
+  "name": "carnet-de-pluie",
+  "version": "0.1.0",
+  "description": "Dashboard d'arrosage intelligent du jardin (Anières, GE)",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node test/engine.test.mjs",
+    "serve": "python3 -m http.server 8080"
+  }
+}

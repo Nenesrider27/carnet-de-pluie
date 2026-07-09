@@ -1,0 +1,470 @@
+/* =====================================================================
+   Carnet de pluie — feuille de style
+   Thème sombre « almanach de nuit ». Le verdict est l'unique élément
+   dominant ; tout le reste est discret et repliable.
+   ===================================================================== */
+
+:root {
+  /* Fonds : nuit bleutée au bord du lac, pas de noir pur */
+  --bg:        #0E141A;
+  --bg-glow:   #0E141A; /* remplacé dynamiquement par la teinte du verdict */
+  --surface:   #171E26;
+  --surface-2: #1E2831;
+  --line:      #2A3540;
+
+  /* Encres : blanc chaud « papier », dégradés de gris froid */
+  --ink:       #ECE6DA;
+  --ink-dim:   #9DA9B3;
+  --ink-faint: #63707B;
+
+  /* Accents sémantiques (cf. plan) */
+  --amber:     #EDA53E; /* il faut agir / arroser */
+  --sage:      #96B78F; /* rien à faire / repos */
+  --blue:      #6BA7DE; /* la pluie s'en charge */
+  --red:       #D9755E; /* erreur */
+
+  --radius: 18px;
+  --radius-sm: 11px;
+  --pad: clamp(16px, 5vw, 22px);
+
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-body: "Hanken Grotesk", system-ui, -apple-system, sans-serif;
+  --font-mono: "Spline Sans Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  color: var(--ink);
+  background: var(--bg);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Halo d'ambiance : prend la couleur de la décision (var mise à jour en JS) */
+  background-image:
+    radial-gradient(120% 60% at 50% -8%, var(--bg-glow) 0%, transparent 62%);
+  background-attachment: fixed;
+  min-height: 100vh;
+}
+
+.wrap {
+  width: 100%;
+  max-width: 560px;
+  margin: 0 auto;
+  padding: max(18px, env(safe-area-inset-top)) var(--pad)
+           calc(40px + env(safe-area-inset-bottom));
+}
+
+/* ---- Bandeau hors-ligne / erreur ---- */
+.notice {
+  display: none;
+  font-family: var(--font-mono);
+  font-size: .74rem;
+  letter-spacing: .01em;
+  padding: 9px 13px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 14px;
+  border: 1px solid transparent;
+}
+.notice.show { display: block; }
+.notice.offline {
+  color: #E9C98C;
+  background: rgba(237,165,62,.09);
+  border-color: rgba(237,165,62,.28);
+}
+.notice.error {
+  color: #EBA592;
+  background: rgba(217,117,94,.10);
+  border-color: rgba(217,117,94,.32);
+}
+
+/* ---- En-tête ---- */
+header { margin-bottom: 20px; }
+.wordmark {
+  font-family: var(--font-mono);
+  font-size: .72rem;
+  font-weight: 500;
+  letter-spacing: .28em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.wordmark::before {
+  content: "";
+  width: 16px; height: 1px;
+  background: var(--ink-faint);
+}
+.dateline {
+  margin-top: 8px;
+  font-family: var(--font-display);
+  font-size: 1.16rem;
+  font-weight: 400;
+  color: var(--ink-dim);
+  font-variation-settings: "opsz" 40;
+}
+.dateline .loc { color: var(--ink-faint); }
+
+/* ---- Carte verdict (héros) ---- */
+.verdict {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--accent, var(--line));
+  border-radius: var(--radius);
+  padding: clamp(24px, 7vw, 34px) var(--pad) calc(var(--pad) + 4px);
+  box-shadow: 0 18px 40px -28px rgba(0,0,0,.9);
+}
+/* halo intérieur teinté par l'état */
+.verdict::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(90% 70% at 22% 0%,
+              color-mix(in srgb, var(--accent) 20%, transparent) 0%,
+              transparent 58%);
+  pointer-events: none;
+}
+.verdict > * { position: relative; }
+
+.verdict .icon {
+  font-size: 2rem;
+  line-height: 1;
+  margin-bottom: 14px;
+  filter: saturate(1.05);
+}
+.verdict .title {
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 144, "wght" 560;
+  font-weight: 560;
+  font-size: clamp(2.7rem, 12.5vw, 4.2rem);
+  line-height: .98;
+  letter-spacing: -.015em;
+  color: var(--ink);
+  margin: 0;
+  text-wrap: balance;
+}
+.verdict .title .acc--big { color: var(--accent, var(--ink)); }
+.verdict .subtitle {
+  margin-top: 14px;
+  font-size: 1.06rem;
+  color: var(--ink);
+  font-weight: 500;
+}
+.verdict .why {
+  margin-top: 10px;
+  font-size: .95rem;
+  color: var(--ink-dim);
+  max-width: 42ch;
+}
+.verdict .readout {
+  margin-top: 18px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 18px;
+  font-family: var(--font-mono);
+  font-size: .8rem;
+  color: var(--ink-dim);
+}
+.verdict .readout b {
+  color: var(--ink);
+  font-weight: 500;
+}
+.verdict .tip {
+  margin-top: 15px;
+  font-size: .88rem;
+  color: var(--amber);
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+}
+.verdict .second {
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: .82rem;
+  color: var(--ink-faint);
+}
+
+/* palettes d'accent par état */
+.state-arroser { --accent: var(--amber); }
+.state-presque { --accent: #CDB57E; }
+.state-attends { --accent: var(--sage); }
+.state-fait    { --accent: var(--sage); }
+.state-rien    { --accent: var(--sage); }
+.state-pluie   { --accent: var(--blue); }
+.state-erreur  { --accent: var(--red); }
+
+/* ---- Note de synchro (l'autre a arrosé) ---- */
+.sync-note {
+  margin-top: 12px;
+  padding: 11px 15px;
+  background: rgba(107,167,222,.09);
+  border: 1px solid rgba(107,167,222,.26);
+  border-radius: var(--radius-sm);
+  font-size: .9rem;
+  color: #bcd6ef;
+}
+
+/* ---- Sections repliables ---- */
+details {
+  margin-top: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+details > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 15px var(--pad);
+  font-weight: 600;
+  font-size: .96rem;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  user-select: none;
+}
+details > summary::-webkit-details-marker { display: none; }
+details > summary::after {
+  content: "+";
+  font-family: var(--font-mono);
+  font-size: 1.1rem;
+  color: var(--ink-faint);
+  transition: transform .2s ease;
+}
+details[open] > summary::after { content: "–"; }
+.details-body {
+  padding: 0 var(--pad) 18px;
+  color: var(--ink-dim);
+  font-size: .93rem;
+}
+.details-body p { margin: 0 0 10px; }
+.details-body ol { margin: 0; padding-left: 1.2em; }
+.details-body li { margin-bottom: 9px; }
+.details-body li b { color: var(--ink); font-weight: 600; }
+
+/* ---- Carte « J'ai arrosé » (bloc plein, pas replié) ---- */
+.card {
+  margin-top: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 16px var(--pad) 18px;
+}
+.card h2 {
+  margin: 0 0 14px;
+  font-family: var(--font-display);
+  font-variation-settings: "opsz" 40;
+  font-weight: 500;
+  font-size: 1.28rem;
+  color: var(--ink);
+}
+.field-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: end;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 120px;
+}
+.field label {
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+input[type="date"], input[type="number"], input[type="text"] {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 11px 12px;
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+}
+input:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+button {
+  font-family: var(--font-body);
+  font-size: .98rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 18px;
+  transition: filter .15s ease, transform .05s ease;
+}
+button:active { transform: translateY(1px); }
+button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
+.btn-primary {
+  background: var(--amber);
+  color: #221803;
+  flex: 1 1 130px;
+}
+.btn-primary:hover { filter: brightness(1.06); }
+.btn-primary:disabled { background: var(--line); color: var(--ink-faint); cursor: not-allowed; }
+
+.week-line {
+  margin-top: 13px;
+  font-family: var(--font-mono);
+  font-size: .82rem;
+  color: var(--ink-dim);
+}
+.week-line b { color: var(--ink); }
+.save-feedback {
+  margin-top: 11px;
+  font-size: .88rem;
+  min-height: 1.2em;
+}
+.save-feedback.ok { color: var(--sage); }
+.save-feedback.err { color: var(--red); }
+.save-feedback .retry {
+  background: none; border: 1px solid var(--red);
+  color: var(--red); padding: 3px 10px; margin-left: 8px;
+  font-size: .8rem; border-radius: 7px;
+}
+
+/* ---- Historique ---- */
+.log-list { list-style: none; margin: 0; padding: 0; }
+.log-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: .92rem;
+}
+.log-list li:last-child { border-bottom: none; }
+.log-list .day { color: var(--ink); }
+.log-list .amt {
+  font-family: var(--font-mono);
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.log-list .who { color: var(--ink-faint); font-size: .85em; }
+.log-empty { color: var(--ink-faint); font-style: italic; }
+
+/* ---- Jauges de pluie (détail pluie) ---- */
+.gauge {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 132px;
+  margin: 6px 0 4px;
+  padding-top: 20px;
+}
+.gauge .bar {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 5px;
+  cursor: default;
+  position: relative;
+  min-width: 0;
+}
+.gauge .stem {
+  width: 68%;
+  max-width: 22px;
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  background: var(--blue);
+  transition: height .3s ease;
+}
+.gauge .bar.past .stem { background: color-mix(in srgb, var(--blue) 78%, #26313b); }
+.gauge .bar.fore .stem {
+  background: repeating-linear-gradient(
+    -45deg, var(--blue), var(--blue) 3px, transparent 3px, transparent 6px);
+  opacity: .9;
+}
+.gauge .bar.today .stem { background: var(--amber); box-shadow: 0 0 0 1px rgba(237,165,62,.4); }
+.gauge .bar.dry .stem { background: var(--line); }
+.gauge .lbl {
+  font-family: var(--font-mono);
+  font-size: .58rem;
+  color: var(--ink-faint);
+  text-align: center;
+  line-height: 1.15;
+}
+.gauge .bar.today .lbl { color: var(--amber); }
+.gauge .val {
+  position: absolute;
+  top: -18px;
+  font-family: var(--font-mono);
+  font-size: .58rem;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.gauge .prob {
+  font-family: var(--font-mono);
+  font-size: .54rem;
+  color: var(--blue);
+  opacity: .85;
+}
+.gauge-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-family: var(--font-mono);
+  font-size: .66rem;
+  color: var(--ink-faint);
+  margin-top: 10px;
+}
+.gauge-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.gauge-legend i { width: 14px; height: 8px; border-radius: 2px; display: inline-block; }
+
+/* ---- Réglages ---- */
+.setting { margin-bottom: 16px; }
+.setting:last-child { margin-bottom: 0; }
+.setting .hint {
+  margin-top: 7px;
+  font-size: .8rem;
+  color: var(--ink-faint);
+  line-height: 1.45;
+}
+
+/* ---- Pied ---- */
+footer {
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: .68rem;
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+.synced {
+  margin-top: 10px;
+  font-family: var(--font-mono);
+  font-size: .7rem;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
