@@ -93,6 +93,32 @@ Rien n'est marqué « fini » sans avoir été exécuté sur de vraies données.
 - Le prénom (`auteur`) reste **local à l'appareil** (localStorage) — Ernest sur son tel, Papa sur le sien. L'onboarding qui le demande au 1er lancement = étape 5.
 - Purge 14 j déclenchée au chargement (best-effort, n'empêche pas la lecture si elle échoue).
 
-### Reste à tester (étapes suivantes)
+### Reste à tester (après étape 2)
 - Envoi push réel + subscription 410 nettoyée — étape 4.
 - Chrono lancer/stop → entrée Supabase — étape 5.
+
+---
+
+## Étape 3 — Mise en ligne (GitHub Pages) + PWA
+
+### 3.1 Recherche des contraintes iOS (agent parallèle, sources primaires)
+- **Fait** : agent dédié → faits vérifiés (WebKit, Apple Developer, MDN, 2023-2025) sur PWA/iOS + Web Push.
+- **Corrections apportées à la construction** :
+  - iOS **ignore** les icônes `maskable` et applique son propre masque → il faut une icône **carrée pleine, opaque**. La mienne l'est (fond couvrant tout le carré). ✓
+  - `apple-touch-icon` **prime** sur les icônes du manifest → balise ajoutée (180×180 opaque). ✓
+  - Confirmé : push iOS **16.4+**, **mode installé uniquement**, **geste utilisateur requis**, pas de notif locale planifiée, purge « 7 j » **inapplicable** en installé.
+
+### 3.2 Manifest + fichiers PWA
+- **Testé** : servis en local + validité.
+- **Résultat** : `manifest.json` JSON valide (display standalone, 3 icônes), icônes 192/512/180 générées (goutte ambre sur fond nuit), toutes servies en 200 avec le bon type MIME. Meta iOS présentes (`manifest`, `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`, `apple-touch-icon`, `mobile-web-app-capable`).
+
+### 3.3 Service worker — intégrité du précache
+- **Testé** : chaque entrée de `CORE` dans `sw.js` renvoie 200 (une seule entrée manquante ferait échouer `addAll` → installation KO).
+- **Résultat** : **11/11 fichiers en 200** → précache ne peut pas échouer. Syntaxe `sw.js` valide.
+- **Stratégies** : APIs (open-meteo, supabase) jamais cachées par le SW ; Google Fonts en cache-first ; navigation en network-first ; assets même-origine en stale-while-revalidate. Bump `VERSION` à chaque déploiement.
+
+### 3.4 Limite de test connue (honnête)
+- Le **cycle de vie runtime du SW** (install → activate → cache → offline → mode standalone iOS) **n'est PAS testable de façon fiable en Chrome headless one-shot** : `--virtual-time-budget` ferme le navigateur avant la fin de l'install async, et un profil disque neuf gèle. J'ai vérifié tout ce qui est vérifiable statiquement (précache intègre, manifest valide, code d'enregistrement standard, syntaxe). **Le test définitif (installation, offline, écran d'accueil) se fait sur le site https en ligne / l'iPhone** — à confirmer au déploiement.
+
+### À faire avec Ernest (étape 3)
+- Fournir le **repo GitHub** → `git remote add` + `git push` → activer Pages → tester l'install sur son iPhone.
