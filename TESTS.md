@@ -120,5 +120,42 @@ Rien n'est marqué « fini » sans avoir été exécuté sur de vraies données.
 ### 3.4 Limite de test connue (honnête)
 - Le **cycle de vie runtime du SW** (install → activate → cache → offline → mode standalone iOS) **n'est PAS testable de façon fiable en Chrome headless one-shot** : `--virtual-time-budget` ferme le navigateur avant la fin de l'install async, et un profil disque neuf gèle. J'ai vérifié tout ce qui est vérifiable statiquement (précache intègre, manifest valide, code d'enregistrement standard, syntaxe). **Le test définitif (installation, offline, écran d'accueil) se fait sur le site https en ligne / l'iPhone** — à confirmer au déploiement.
 
-### À faire avec Ernest (étape 3)
-- Fournir le **repo GitHub** → `git remote add` + `git push` → activer Pages → tester l'install sur son iPhone.
+### 3.5 Déploiement en production (VÉRIFIÉ)
+- Repo public créé + poussé : `github.com/Nenesrider27/carnet-de-pluie`. Pages activé.
+- **Site en ligne** : https://nenesrider27.github.io/carnet-de-pluie/ (HTTP 200 après ~25 s).
+- Tous les fichiers servis en 200 avec le bon type MIME (JS en `application/javascript` → `import` OK).
+- **Rendu production vérifié** (headless sur l'URL live) : « Arroser 44 min », date correcte,
+  « météo à l'instant · synchro à l'instant » → météo **et** lecture Supabase OK depuis l'origine https.
+
+### Reste sur appareil (étape 3)
+- Ajout à l'écran d'accueil + test SW/offline en mode installé : **à confirmer sur l'iPhone d'Ernest** (non testable en headless).
+
+---
+
+## Étape 4 — Notifications push matinales
+
+### 4.1 Logique décision→notification — `node test/notify.test.mjs`
+- **Testé** : quels états déclenchent un push et le texte, via `planNotification` (fonction pure de `morning-push.mjs`), même moteur que la page.
+- **Résultat** : **8 PASS / 0 FAIL**
+  - ARROSER (sec) → push, titre « 💧 Arrose ~44 min ce matin », corps mentionne le déficit ✓
+  - PLUIE avec besoin réel (rejoue sans la pluie 48 h → aurait été « arroser ») → push « 🌧️ La pluie s'en charge » ✓
+  - PLUIE **sans** besoin (déjà bien arrosé) → **pas** de push ✓
+  - RIEN / ATTENDS → **pas** de push (jamais de spam « rien à faire ») ✓
+
+### 4.2 web-push installable
+- **Testé** : `npm install web-push@3` (comme le workflow) + import.
+- **Résultat** : installé, `generateVAPIDKeys` disponible. Le workflow `npm install web-push@3` fonctionnera.
+
+### 4.3 Garde-fous du script
+- Heure locale Zurich ≠ 6h et pas de `FORCE=1` → sort sans rien faire (le 2e créneau cron gère été/hiver).
+- `VAPID_PRIVATE_KEY` absent ou `VAPID_PUBLIC` non renseigné → erreur explicite (pas d'envoi silencieux).
+- Sur envoi : code 404/410 → subscription supprimée de la base.
+
+### Limites de test connues (honnête)
+- **La livraison réelle d'un push n'est pas testée** ici : elle exige (1) la table `push_subscriptions`, (2) de vraies clés VAPID, (3) la PWA **installée** sur un iPhone qui s'abonne, (4) le site en https. C'est un test **sur appareil**, à faire une fois déployé.
+- Rappel iOS (vérifié étape 3.1) : push **seulement en mode installé**, **iOS 16.4+**, geste utilisateur requis.
+
+### À faire avec Ernest (étape 4)
+- Créer la table `push_subscriptions` (SQL dans le README).
+- `npx web-push generate-vapid-keys` → clé publique dans `config.js`, clé privée en secret GitHub `VAPID_PRIVATE_KEY`.
+- Installer la PWA sur chaque iPhone → activer les notifs → tester via **Actions → Run workflow (force=1)**.
