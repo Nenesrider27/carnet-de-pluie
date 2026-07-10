@@ -9,4 +9,4 @@ export const SUPA_KEY = 'sb_publishable_KhET2u38G7fH0IWCpSlkLA_t_X3LIh1';
 // Clé VAPID PUBLIQUE pour les notifications push (étape 4).
 // Générée par `npx web-push generate-vapid-keys` — colle ici la "Public Key".
 // La clé PRIVÉE ne va PAS ici : elle va dans un secret GitHub Actions (VAPID_PRIVATE_KEY).
-export const VAPID_PUBLIC = 'COLLE_ICI_LA_CLE_PUBLIQUE_VAPID';
+export const VAPID_PUBLIC = 'BJlRvjYJnVMz5LLxB-RDCn2TQOEBBndXTcsQpErz7AekULcFRKmvK8oJUEVVxi3QnkxHDkOn4jGee_QgO_-TxGE';
