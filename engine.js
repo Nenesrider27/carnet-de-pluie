@@ -197,21 +197,27 @@ export function decide(input) {
 }
 
 // --- Projection « semaine à venir » ------------------------------------
-// Rejoue le moteur pour chaque jour de today..today+6 (limité aux données),
-// en supposant qu'aucun arrosage futur n'a lieu (projection « si on ne fait
-// rien »). Utilisé pour la bande 7 jours (étape 5) et exposé dès maintenant.
+// Rejoue le moteur pour chaque jour de today..today+6, en SIMULANT qu'on suit
+// la reco : si un jour est « arroser », on ajoute un arrosage virtuel ce jour-là
+// (ce qui déclenche l'espacement et réduit le déficit les jours suivants).
+// Résultat : la bande montre les VRAIES prochaines sessions (💧 … ⏳ repos … 💧),
+// pas « arroser » répété. Répond à « quand tomberont les prochaines sessions ? ».
 export function projectWeek(input) {
   const { weather } = input;
+  let sim = [...(input.arrosages || [])]; // arrosages réels + simulés au fil des jours
   const out = [];
   for (let k = 0; k < 7; k++) {
     const day = addDays(input.today, k);
     if (!weather?.time?.includes(day)) {
       // Au-delà des prévisions dispo (modèle ICON CH2 = 5 j) : inconnu.
-      out.push({ jour: day, etat: 'inconnu' });
+      out.push({ jour: day, etat: 'inconnu', minutes: null });
       continue;
     }
-    const d = decide({ ...input, today: day });
+    const d = decide({ ...input, arrosages: sim, today: day });
     out.push({ jour: day, etat: d.etat, minutes: d.minutes ?? null });
+    if (d.etat === 'arroser') {
+      sim = sim.concat({ jour: day, minutes: d.minutes, auteur: null });
+    }
   }
   return out;
 }

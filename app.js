@@ -1,7 +1,7 @@
 // app.js — couche présentation.
 // La LOGIQUE d'arrosage vit dans engine.js ; l'ACCÈS partagé dans store.js.
 // Ici : orchestration, cache localStorage (offline + affichage instantané), DOM.
-import { decide, DEFAULTS, CONSTANTS, addDays } from './engine.js';
+import { decide, DEFAULTS, CONSTANTS, addDays, projectWeek } from './engine.js';
 import { getArrosages, getReglages, upsertArrosage, patchReglages, purgeBefore, upsertSubscription } from './store.js';
 import { VAPID_PUBLIC } from './config.js';
 
@@ -17,6 +17,7 @@ const LS = {
   arrosages: 'cp.arrosages',  // [{ jour, minutes, auteur, updated_at }]  (cache de Supabase)
   reglages: 'cp.reglages',    // { objectif_mm, debit_mm_h }             (cache de Supabase)
   prenom: 'cp.prenom',        // string (identité LOCALE de l'appareil)
+  onboarded: 'cp.onboarded',  // bool (onboarding vu)
 };
 
 // --- Utilitaires -------------------------------------------------------
@@ -49,6 +50,7 @@ let arrosages = [];               // source : Supabase (cache localStorage)
 let reglages = { ...DEFAULTS };   // source : Supabase (cache localStorage)
 let dataTs = null, dataOffline = false;
 let lastFailedSave = null;        // { date, min } pour le bouton « Réessayer »
+let currentArroserMinutes = 0;    // minutes recommandées (chrono / « C'est fait »)
 
 const getPrenom = () => readLS(LS.prenom, '') || '';
 
@@ -126,6 +128,7 @@ function render() {
       renderWeekLine(decision);
     }
   }
+  renderWeek();
   renderLog();
   renderGauge();
   renderStatus();
@@ -142,6 +145,7 @@ function renderVerdictError(title, subtitle, why) {
   $('v-why').textContent = why;
   $('v-readout').innerHTML = '';
   $('v-tip').hidden = true;
+  $('v-actions').hidden = true;
   $('v-second').hidden = true;
 }
 
@@ -150,6 +154,8 @@ function renderVerdict(d, reg) {
   setState('state-' + d.etat);
   $('v-icon').textContent = ICONS[d.etat] || '💧';
   $('v-tip').hidden = d.etat !== 'arroser';
+  $('v-actions').hidden = d.etat !== 'arroser';
+  if (d.etat === 'arroser') currentArroserMinutes = d.minutes;
   $('v-second').hidden = true;
 
   let title = '', subtitle = '', why = '';
@@ -197,6 +203,22 @@ function renderVerdict(d, reg) {
 function renderWeekLine(d) {
   const m = d.metrics;
   $('week-line').innerHTML = `Cette semaine : <b>${m.minutes7} min</b> arrosés (~${round1(m.arrose_mm)} mm).`;
+}
+
+const WK_ICONS = { arroser: '💧', pluie: '🌧️', attends: '⏳', fait: '✅', rien: '✅', presque: '🌱', inconnu: '·' };
+function renderWeek() {
+  const el = $('week');
+  if (!weather) { el.hidden = true; return; }
+  const today = todayZurich();
+  const wk = projectWeek({ weather, arrosages, reglages, today });
+  el.hidden = false;
+  el.innerHTML = wk.map((d, i) => {
+    const cls = 'wk-cell' + (i === 0 ? ' today' : '') + (d.etat === 'inconnu' ? ' inconnu' : '');
+    const day = i === 0 ? 'auj.'
+      : new Intl.DateTimeFormat('fr-FR', { weekday: 'short', timeZone: 'UTC' }).format(isoToDate(d.jour)).replace('.', '');
+    const min = d.etat === 'arroser' && d.minutes ? `${d.minutes}'` : '';
+    return `<div class="${cls}"><span class="wk-day">${day}</span><span class="wk-icon">${WK_ICONS[d.etat] || '·'}</span><span class="wk-min">${min}</span></div>`;
+  }).join('');
 }
 
 function renderLog() {
@@ -269,6 +291,18 @@ function escapeHtml(s) {
 }
 
 // --- Enregistrer un arrosage (Supabase, échec honnête) ----------------
+// Cœur partagé : lit l'existant du jour, additionne, upsert. Lève en cas d'échec.
+async function recordArrosage(date, min) {
+  const existing = arrosages.find((r) => r.jour === date);
+  const total = (existing?.minutes || 0) + min;
+  const row = await upsertArrosage({ jour: date, minutes: total, auteur: getPrenom() });
+  arrosages = arrosages.filter((r) => r.jour !== date).concat(row);
+  writeLS(LS.arrosages, arrosages);
+  dataTs = Date.now(); dataOffline = false;
+  return { total, existed: !!existing };
+}
+
+// Formulaire manuel (date passée / durée custom).
 async function saveArrosage() {
   const fb = $('save-feedback');
   fb.className = 'save-feedback';
@@ -280,22 +314,15 @@ async function saveArrosage() {
   if (date > today) return failSave('Pas de date future.');
   if (!Number.isFinite(min) || min <= 0) return failSave('Entre un nombre de minutes valide.');
 
-  const existing = arrosages.find((r) => r.jour === date);
-  const total = (existing?.minutes || 0) + min;
-  const prenom = getPrenom();
-
   const btn = $('btn-save');
   btn.disabled = true; const label = btn.textContent; btn.textContent = 'Envoi…';
   fb.className = 'save-feedback'; fb.textContent = '';
   try {
-    const row = await upsertArrosage({ jour: date, minutes: total, auteur: prenom });
-    arrosages = arrosages.filter((r) => r.jour !== date).concat(row);
-    writeLS(LS.arrosages, arrosages);
-    dataTs = Date.now(); dataOffline = false;
+    const { total, existed } = await recordArrosage(date, min);
     lastFailedSave = null;
     $('in-min').value = '';
     fb.className = 'save-feedback ok';
-    fb.textContent = existing
+    fb.textContent = existed
       ? `✓ Ajouté. ${cap(fmtShort(date))} : ${total} min au total.`
       : `✓ Enregistré. ${cap(fmtShort(date))} : ${min} min.`;
     render();
@@ -311,6 +338,115 @@ async function saveArrosage() {
   } finally {
     btn.disabled = false; btn.textContent = label;
   }
+}
+
+// Enregistrer un arrosage d'AUJOURD'HUI (bouton « C'est fait » ou fin de chrono).
+async function recordToday(min) {
+  const today = todayZurich();
+  try {
+    const { total } = await recordArrosage(today, min);
+    toast(total !== min ? `✓ ${min} min ajoutées (${total} min aujourd'hui)` : `✓ ${min} min enregistrées`);
+    render();
+    return true;
+  } catch (e) {
+    console.warn('[recordToday] échec :', e.message);
+    toast('❌ Échec — hors ligne ? Rien enregistré.');
+    return false;
+  }
+}
+
+// --- Toast -------------------------------------------------------------
+let toastTimer = null;
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg; el.hidden = false;
+  requestAnimationFrame(() => el.classList.add('show'));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => { el.hidden = true; }, 300);
+  }, 3400);
+}
+
+// --- Chrono d'arrosage -------------------------------------------------
+let chrono = null;   // { targetSec, startMs, interval, minutes, finished }
+let audioCtx = null;
+
+function startChrono(minutes) {
+  if (!minutes || minutes <= 0) return;
+  // Débloquer l'audio sur le geste utilisateur (contrainte iOS).
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch {}
+  chrono = { targetSec: minutes * 60, startMs: Date.now(), minutes, interval: null, finished: false };
+  $('chrono-label').textContent = 'Arrosage en cours';
+  $('chrono-time').classList.remove('done');
+  $('chrono-sub').textContent = `Objectif : ${minutes} min`;
+  $('chrono-stop').textContent = '■ Stop & enregistrer';
+  $('chrono').hidden = false;
+  tickChrono();
+  chrono.interval = setInterval(tickChrono, 250);
+}
+
+function tickChrono() {
+  if (!chrono) return;
+  const elapsed = (Date.now() - chrono.startMs) / 1000;
+  const remaining = Math.max(0, chrono.targetSec - elapsed);
+  const mm = Math.floor(remaining / 60), ss = Math.floor(remaining % 60);
+  $('chrono-time').textContent = `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+  $('chrono-bar-fill').style.width = Math.min(100, (elapsed / chrono.targetSec) * 100) + '%';
+  if (remaining <= 0 && !chrono.finished) finishChrono();
+}
+
+async function finishChrono() {
+  chrono.finished = true;
+  clearInterval(chrono.interval);
+  playAlarm();
+  $('chrono-time').textContent = '00:00';
+  $('chrono-time').classList.add('done');
+  $('chrono-label').textContent = 'Terminé !';
+  $('chrono-sub').textContent = `Session de ${chrono.minutes} min`;
+  $('chrono-bar-fill').style.width = '100%';
+  $('chrono-stop').textContent = 'Fermer';
+  await recordToday(chrono.minutes);
+}
+
+async function stopChrono() {
+  if (!chrono) return;
+  if (chrono.finished) { closeChrono(); return; } // bouton « Fermer »
+  clearInterval(chrono.interval);
+  const min = Math.max(1, Math.round((Date.now() - chrono.startMs) / 60000));
+  closeChrono();
+  await recordToday(min);
+}
+
+function cancelChrono() { closeChrono(); }
+
+function closeChrono() {
+  if (chrono?.interval) clearInterval(chrono.interval);
+  chrono = null;
+  $('chrono').hidden = true;
+}
+
+function playAlarm() {
+  if (document.visibilityState !== 'visible') return;
+  try {
+    const ctx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    audioCtx = ctx;
+    if (ctx.state === 'suspended') ctx.resume();
+    const t0 = ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = 'sine'; o.frequency.value = 880;
+      const t = t0 + i * 0.5;
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.3, t + 0.05);
+      g.gain.linearRampToValueAtTime(0, t + 0.4);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(t); o.stop(t + 0.45);
+    }
+  } catch {}
 }
 
 function failSave(msg) {
@@ -374,12 +510,49 @@ function initForm() {
   $('btn-save').addEventListener('click', saveArrosage);
   $('btn-reglages').addEventListener('click', saveReglages);
   $('in-min').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveArrosage(); });
+  // Chrono / « C'est fait »
+  $('btn-chrono').addEventListener('click', () => startChrono(currentArroserMinutes));
+  $('btn-done').addEventListener('click', async () => {
+    const b = $('btn-done'); b.disabled = true;
+    await recordToday(currentArroserMinutes);
+    b.disabled = false;
+  });
+  $('chrono-stop').addEventListener('click', stopChrono);
+  $('chrono-cancel').addEventListener('click', cancelChrono);
+}
+
+// --- Onboarding (1er lancement) ---------------------------------------
+function initOnboarding() {
+  if (readLS(LS.onboarded, false)) return;
+  const slides = isStandalone() ? [0, 1] : [0, 1, 2]; // saute « écran d'accueil » si déjà installé
+  let idx = 0;
+  const overlay = $('onboard');
+  const dots = $('onboard-dots');
+  dots.innerHTML = slides.map((_, i) => `<span class="dot${i === 0 ? ' on' : ''}"></span>`).join('');
+  const show = (i) => {
+    document.querySelectorAll('.onboard-slide').forEach((s) => { s.hidden = true; });
+    document.querySelector(`.onboard-slide[data-slide="${slides[i]}"]`).hidden = false;
+    dots.querySelectorAll('.dot').forEach((d, j) => d.classList.toggle('on', j === i));
+    $('onboard-next').textContent = i === slides.length - 1 ? "C'est parti" : 'Continuer';
+    if (slides[i] === 0) setTimeout(() => $('ob-prenom').focus(), 60);
+  };
+  overlay.hidden = false;
+  show(0);
+  $('onboard-next').addEventListener('click', () => {
+    if (slides[idx] === 0) {
+      const p = $('ob-prenom').value.trim();
+      if (p) { writeLS(LS.prenom, p); fillSettings(); }
+    }
+    if (idx < slides.length - 1) { show(++idx); }
+    else { writeLS(LS.onboarded, true); overlay.hidden = true; }
+  });
 }
 
 async function init() {
   loadCache();
   initForm();
   initPush();
+  initOnboarding();
   render();                 // cache-first : affichage immédiat
   await Promise.all([loadWeather(), syncData()]);
   fillSettings();           // rafraîchit objectif/débit depuis Supabase

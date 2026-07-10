@@ -13,8 +13,8 @@ Conçu pour deux arroseurs (père + fils) partageant le même jardin.
 - [x] **Étape 1 — Cœur local** : page + fetch météo + moteur 5 règles. App utilisable en local.
 - [x] **Étape 2 — Historique partagé (Supabase)** : base commune père/fils, cache offline, échecs honnêtes.
 - [x] **Étape 3 — GitHub Pages + PWA** : manifest, service worker, icônes, meta iOS (construit + testé local ; déploiement à faire).
-- [~] **Étape 4 — Notifications push matinales** : code + logique testés ; live à câbler (VAPID + table + install iOS).
-- [ ] Étape 5 — Finitions UX (chrono, semaine à venir, synchro visible, onboarding)
+- [~] **Étape 4 — Notifications push matinales** : code + infra en place (VAPID, table, secret) ; reste l'install iOS + test livraison.
+- [x] **Étape 5 — Finitions UX** : chrono d'arrosage, bande « semaine à venir », onboarding 3 écrans, synchro visible.
 
 ## Lancer en local
 

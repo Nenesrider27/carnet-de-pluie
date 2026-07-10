@@ -46,10 +46,18 @@
       <div class="readout" id="v-readout"></div>
       <div class="tip" id="v-tip" hidden><span>🌅</span><span>Arrose tôt le matin ou en soirée.</span></div>
       <div class="second" id="v-second" hidden></div>
+      <div class="v-actions" id="v-actions" hidden>
+        <button class="btn-primary" id="btn-chrono">▶&nbsp;Lancer le chrono</button>
+        <button class="btn-ghost" id="btn-done">✓&nbsp;C'est fait</button>
+      </div>
     </section>
+
+    <!-- Bande « semaine à venir » : projection du moteur sur 7 jours -->
+    <div class="week" id="week" hidden aria-label="Semaine à venir"></div>
 
     <!-- Synchro visible : l'autre utilisateur a arrosé récemment -->
     <div class="sync-note" id="sync-note" hidden></div>
+    <div class="week-line" id="week-line"></div>
 
     <!-- Pourquoi (replié) -->
     <details>
@@ -66,23 +74,24 @@
       </div>
     </details>
 
-    <!-- J'ai arrosé -->
-    <section class="card">
-      <h2>J'ai arrosé</h2>
-      <div class="field-row">
-        <div class="field">
-          <label for="in-date">Jour</label>
-          <input type="date" id="in-date" />
+    <!-- Saisie manuelle (repliée) : date passée ou durée personnalisée -->
+    <details>
+      <summary>Saisir un arrosage à la main</summary>
+      <div class="details-body">
+        <div class="field-row">
+          <div class="field">
+            <label for="in-date">Jour</label>
+            <input type="date" id="in-date" />
+          </div>
+          <div class="field">
+            <label for="in-min">Minutes</label>
+            <input type="number" id="in-min" min="1" max="600" step="1" inputmode="numeric" placeholder="ex. 30" />
+          </div>
+          <button class="btn-primary" id="btn-save">Enregistrer</button>
         </div>
-        <div class="field">
-          <label for="in-min">Minutes</label>
-          <input type="number" id="in-min" min="1" max="600" step="1" inputmode="numeric" placeholder="ex. 30" />
-        </div>
-        <button class="btn-primary" id="btn-save">Enregistrer</button>
+        <div class="save-feedback" id="save-feedback" role="status"></div>
       </div>
-      <div class="week-line" id="week-line"></div>
-      <div class="save-feedback" id="save-feedback" role="status"></div>
-    </section>
+    </details>
 
     <!-- Historique -->
     <details>
@@ -145,6 +154,60 @@
       Arrosage manuel — pas de connexion au système.
     </footer>
   </main>
+
+  <!-- Onboarding (1er lancement) -->
+  <div class="onboard" id="onboard" hidden>
+    <div class="onboard-inner">
+      <div class="onboard-slide" data-slide="0">
+        <div class="onboard-icon">💧</div>
+        <h2>Carnet de pluie</h2>
+        <p>Ton jardin à Anières, arrosé au bon moment. Chaque jour, l'app te dit <b>s'il faut arroser et combien de minutes</b>, d'après la vraie météo MétéoSuisse.</p>
+        <div class="field">
+          <label for="ob-prenom">Ton prénom</label>
+          <input type="text" id="ob-prenom" maxlength="20" placeholder="ex. Ernest" />
+        </div>
+        <p class="onboard-hint">Il apparaîtra dans l'historique partagé avec l'autre jardinier.</p>
+      </div>
+      <div class="onboard-slide" data-slide="1" hidden>
+        <div class="onboard-icon">🪴</div>
+        <h2>Une seule chose à lire</h2>
+        <p>La grande carte en haut donne la reco du jour&nbsp;: <b>💧&nbsp;Arroser</b>, <b>🌧️&nbsp;La pluie s'en charge</b>, <b>⏳&nbsp;Attends</b> ou <b>✅&nbsp;Rien à faire</b> — toujours avec le <i>pourquoi</i>.</p>
+        <p>Quand c'est «&nbsp;Arroser&nbsp;», lance le <b>chrono</b> ou tape <b>«&nbsp;C'est fait&nbsp;»</b>&nbsp;: ça s'enregistre pour vous deux.</p>
+      </div>
+      <div class="onboard-slide" data-slide="2" hidden>
+        <div class="onboard-icon">📲</div>
+        <h2>Ajoute-la à l'écran d'accueil</h2>
+        <p>Pour l'avoir comme une vraie app (et recevoir les rappels du matin)&nbsp;:</p>
+        <ol>
+          <li>Ouvre ce lien dans <b>Safari</b></li>
+          <li>Touche <b>Partager</b> (le carré avec la flèche ⬆️)</li>
+          <li><b>«&nbsp;Sur l'écran d'accueil&nbsp;»</b> → <b>Ajouter</b></li>
+        </ol>
+      </div>
+      <div class="onboard-nav">
+        <div class="onboard-dots" id="onboard-dots"></div>
+        <button class="btn-primary" id="onboard-next">Continuer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast de confirmation -->
+  <div class="toast" id="toast" hidden></div>
+
+  <!-- Chrono plein écran -->
+  <div class="chrono" id="chrono" hidden>
+    <div class="chrono-inner">
+      <div class="chrono-label" id="chrono-label">Arrosage en cours</div>
+      <div class="chrono-time" id="chrono-time">00:00</div>
+      <div class="chrono-bar"><span id="chrono-bar-fill"></span></div>
+      <div class="chrono-sub" id="chrono-sub">Objectif&nbsp;: — min</div>
+      <p class="chrono-tip">💡 Lance aussi le minuteur de ton iPhone en parallèle&nbsp;: le son de fin ne sonne que si cette page reste ouverte.</p>
+      <div class="chrono-actions">
+        <button class="btn-primary" id="chrono-stop">■&nbsp;Stop &amp; enregistrer</button>
+        <button class="btn-ghost" id="chrono-cancel">Annuler</button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="app.js"></script>
 </body>

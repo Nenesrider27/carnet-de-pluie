@@ -156,6 +156,41 @@ Rien n'est marqué « fini » sans avoir été exécuté sur de vraies données.
 - Rappel iOS (vérifié étape 3.1) : push **seulement en mode installé**, **iOS 16.4+**, geste utilisateur requis.
 
 ### À faire avec Ernest (étape 4)
-- Créer la table `push_subscriptions` (SQL dans le README).
-- `npx web-push generate-vapid-keys` → clé publique dans `config.js`, clé privée en secret GitHub `VAPID_PRIVATE_KEY`.
+- Créer la table `push_subscriptions` (SQL dans le README). ✅ fait
+- `npx web-push generate-vapid-keys` → clé publique dans `config.js`, clé privée en secret GitHub `VAPID_PRIVATE_KEY`. ✅ fait
 - Installer la PWA sur chaque iPhone → activer les notifs → tester via **Actions → Run workflow (force=1)**.
+
+---
+
+## Étape 5 — Finitions UX
+
+### 5.1 Projection « semaine à venir » (moteur)
+- **Amélioré** : `projectWeek` SIMULE qu'on suit la reco (arrosage virtuel les jours « arroser ») → montre les VRAIES prochaines sessions, pas « arroser » répété.
+- **Testé** : temps sec → aujourd'hui « arroser 44min », puis attends (repos), puis presque. ✅
+- Bande 7 pastilles rendue et vérifiée visuellement (AUJ surligné, 💧+minutes, ⏳ repos, 🌱, · inconnu) ; cohérente avec le verdict (« prochaine session samedi » = SAM 💧 dans la bande).
+
+### 5.2 Chrono d'arrosage
+- **Testé visuellement** : overlay plein écran, compte à rebours Fraunces ambre (44:00→…), barre de progression, objectif, tip iOS honnête (son de fin seulement si page ouverte), boutons Stop/Annuler.
+- **Cassé** : bouton « Stop » trop haut (héritait `flex:1 1 130px` de la rangée horizontale dans une colonne). **Corrigé** : `flex:0 0 auto`.
+- **Câblage vérifié** : état « arroser » → boutons ▶ Lancer / ✓ C'est fait s'affichent (mock : `v-actions visible=true`).
+- **Audio** : `AudioContext` débloqué sur le geste « Lancer » (contrainte iOS), 3 bips à la fin, seulement si page visible.
+
+### 5.3 Enregistrement rapide (« C'est fait » / fin de chrono)
+- **Testé fonctionnel** (mock upsert) : Arroser 44 → clic « C'est fait » → toast « ✓ 44 min enregistrées » → verdict bascule « C'est fait » → POST en base `{2026-07-10, 44, Ernest}`. ✅
+- Refactor : cœur `recordArrosage(date,min)` partagé entre formulaire manuel, « C'est fait » et chrono (une seule logique d'écriture).
+- Le formulaire manuel (date passée + minutes) est passé en section repliée.
+
+### 5.4 Onboarding 3 écrans
+- **Testé** (parcours complet headless) : overlay au 1er lancement → prénom → « comment lire la reco » → « ajout écran d'accueil » → fermeture ; `cp.prenom` et `cp.onboarded` sauvés, prénom reflété dans Réglages. ✅
+- Saute l'écran « écran d'accueil » si déjà en mode installé (`isStandalone`).
+- **Faux positif de test** : 1re capture semblait tronquée → artefact `--force-device-scale-factor=2` (viewport CSS divisé). Mesuré à 390px réel : **aucun débordement**.
+
+### 5.5 Synchro visible (déjà en place étapes 2)
+- Ligne « [Prénom] a arrosé N min hier/aujourd'hui » (`sync-note`), indicateur « météo/synchro il y a X », re-fetch sur `visibilitychange`.
+
+### Non-régression
+- Après étape 5 : moteur **26/26**, notif **8/8**, supabase **9/9**. Rendu global inchangé (verdict, bande, cartes).
+
+### Reste sur appareil (final)
+- Installer la PWA + activer notifs sur les 2 iPhones → test livraison push réelle (Actions force=1).
+- Test chrono réel sur téléphone (lancer 1 min → stop → entrée en base).
