@@ -25,6 +25,26 @@ const $ = (id) => document.getElementById(id);
 const readLS = (k, fb) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch { return fb; } };
 const writeLS = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
+// iOS peut évincer le stockage local d'une PWA entre deux lancements → on demande
+// un stockage PERSISTANT (exempt d'éviction automatique). Résout le « ça oublie
+// mon prénom à chaque fois ».
+let storagePersistent = null;
+async function ensurePersistentStorage() {
+  try {
+    if (navigator.storage && navigator.storage.persist) {
+      storagePersistent = await navigator.storage.persisted();
+      if (!storagePersistent) storagePersistent = await navigator.storage.persist();
+    }
+  } catch { storagePersistent = null; }
+  updateStorageStatus();
+}
+function updateStorageStatus() {
+  const el = $('storage-status'); if (!el) return;
+  if (storagePersistent === true) el.textContent = '💾 Stockage persistant activé — ton prénom est mémorisé.';
+  else if (storagePersistent === false) el.textContent = '⚠️ iOS n\'a pas accordé de stockage persistant : ton prénom peut être oublié. Dis-le-moi si ça se reproduit.';
+  else el.textContent = '';
+}
+
 function todayZurich() {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Europe/Zurich', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -549,6 +569,7 @@ function initOnboarding() {
 }
 
 async function init() {
+  await ensurePersistentStorage();  // demande la persistance AVANT tout (fix reset iOS)
   loadCache();
   initForm();
   initPush();
