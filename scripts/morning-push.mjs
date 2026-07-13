@@ -11,8 +11,12 @@ import { VAPID_PUBLIC } from '../config.js';
 const LAT = 46.2777, LON = 6.2234;
 const API_URL =
   `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
-  `&daily=precipitation_sum,precipitation_probability_max` +
+  `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max,et0_fao_evapotranspiration` +
   `&timezone=Europe%2FZurich&past_days=7&forecast_days=5&models=meteoswiss_icon_ch2`;
+const ET0_FALLBACK_URL =
+  `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+  `&daily=et0_fao_evapotranspiration&timezone=Europe%2FZurich&past_days=7&forecast_days=5`;
+const et0AllNull = (a) => !Array.isArray(a) || a.every((x) => x == null);
 
 const round1 = (n) => Math.round(n * 10) / 10;
 
@@ -62,10 +66,19 @@ async function fetchWeather() {
   if (!res.ok) throw new Error('météo HTTP ' + res.status);
   const data = await res.json();
   if (!data?.daily?.time?.length) throw new Error('météo vide');
+  let et0 = data.daily.et0_fao_evapotranspiration;
+  if (et0AllNull(et0)) {
+    try {
+      const r2 = await fetch(ET0_FALLBACK_URL, { cache: 'no-store' });
+      if (r2.ok) { const d2 = await r2.json(); if (!et0AllNull(d2?.daily?.et0_fao_evapotranspiration)) et0 = d2.daily.et0_fao_evapotranspiration; }
+    } catch { /* repli objectif fixe */ }
+  }
   return {
     time: data.daily.time,
     precipitation_sum: data.daily.precipitation_sum,
     precipitation_probability_max: data.daily.precipitation_probability_max,
+    temperature_2m_max: data.daily.temperature_2m_max,
+    et0,
   };
 }
 

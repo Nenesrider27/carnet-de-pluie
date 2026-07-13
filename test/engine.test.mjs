@@ -122,9 +122,10 @@ check('today avant fenêtre → -1', findTodayIdx(TIMES, '2026-06-01') === -1);
 
 // -- Cohérence : debit/objectif custom
 {
-  const d = decide({ weather: weather(zeros()), arrosages: [], reglages: { objectif_mm: 15, debit_mm_h: 30 }, today: TODAY });
+  // Objectif fixe personnalisé → nécessite le mode manuel (sinon repli 28).
+  const d = decide({ weather: weather(zeros()), arrosages: [], reglages: { objectif_mm: 15, debit_mm_h: 30, objectif_manuel: true }, today: TODAY });
   // déficit 15 → session min(15,20)=15 → round(15/30*60)=30 min
-  check('réglages custom (obj15,débit30) → 30 min', d.etat === 'arroser' && d.minutes === 30, `${d.etat}/${d.minutes}`);
+  check('réglages custom manuel (obj15,débit30) → 30 min', d.etat === 'arroser' && d.minutes === 30, `${d.etat}/${d.minutes}`);
 }
 
 console.log('\n' + results.join('\n'));

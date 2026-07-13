@@ -37,6 +37,9 @@
       </div>
     </header>
 
+    <!-- Bandeau climat (canicule / temps frais / repli ET₀) -->
+    <div class="climate-banner" id="climate-banner" hidden></div>
+
     <!-- HÉROS : le verdict du jour -->
     <section id="verdict" class="verdict state-arroser" aria-live="polite">
       <div class="icon" id="v-icon">💧</div>
@@ -64,6 +67,7 @@
       <summary>Pourquoi arroser comme ça&nbsp;?</summary>
       <div class="details-body">
         <p>L'idée&nbsp;: des racines <b>profondes</b> et résistantes à la sécheresse. On vise donc peu de sessions mais <b>copieuses</b>, plutôt qu'un petit arrosage tous les jours.</p>
+        <p><b>0. L'objectif s'adapte au climat.</b> On calcule ce que la chaleur, le soleil et le vent retirent d'eau au sol (évapotranspiration, ET₀) sur 7&nbsp;jours. En canicule le besoin peut doubler&nbsp;; quand il fait frais il chute. L'objectif suit automatiquement.</p>
         <ol>
           <li><b>Objectif hebdo</b>&nbsp;: on compte la pluie tombée (7&nbsp;j), la pluie prévue (3&nbsp;j) et ce qui a déjà été arrosé. Ce qui manque pour atteindre l'objectif, c'est le <b>déficit</b>.</li>
           <li><b>Pluie annoncée</b>&nbsp;: s'il pleut ≥5&nbsp;mm sous 48&nbsp;h, on laisse faire le ciel — inutile d'arroser juste avant.</li>
@@ -130,11 +134,20 @@
           <p class="hint" id="storage-status"></p>
         </div>
         <div class="setting">
+          <p class="obj-computed" id="obj-computed">Objectif de la semaine&nbsp;: —</p>
           <div class="field">
-            <label for="in-obj">Objectif hebdo (mm)</label>
+            <label for="in-kc">Coefficient de culture (Kc)</label>
+            <input type="number" id="in-kc" min="0.2" max="1.5" step="0.05" inputmode="decimal" />
+          </div>
+          <p class="hint">Objectif = évapotranspiration (ET₀) prévue sur 7&nbsp;j × Kc. Repères&nbsp;: pelouse ~0.8, potager en pleine production ~0.9–1.0, massifs/arbustes établis ~0.5–0.6. Jardin mixte&nbsp;: 0.8.</p>
+          <label class="check-row">
+            <input type="checkbox" id="in-manuel" />
+            <span>Objectif manuel — je fixe la valeur moi-même</span>
+          </label>
+          <div class="field" id="manuel-field" hidden>
+            <label for="in-obj">Objectif hebdo fixe (mm)</label>
             <input type="number" id="in-obj" min="5" max="60" step="1" />
           </div>
-          <p class="hint">Pic d'été&nbsp;: pelouse ~25–30&nbsp;mm, potager en fructification ~28–35&nbsp;mm, massifs/arbustes établis ~15–20&nbsp;mm. 28 = repère mixte pelouse+potager.</p>
         </div>
         <div class="setting">
           <div class="field">

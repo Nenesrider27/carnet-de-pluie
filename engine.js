@@ -22,7 +22,7 @@ export const CONSTANTS = {
 };
 
 // --- Réglages par défaut (surchargés par la table `reglages`) -----------
-export const DEFAULTS = { objectif_mm: 28, debit_mm_h: 27 };
+export const DEFAULTS = { objectif_mm: 28, debit_mm_h: 27, kc: 0.8, objectif_manuel: false };
 
 // --- Helpers de dates : calendaires purs, en UTC minuit (pas de DST) -----
 export function parseISO(iso) {
@@ -40,6 +40,10 @@ export function diffDays(isoA, isoB) {
   // (isoA - isoB) en jours entiers
   return Math.round((parseISO(isoA) - parseISO(isoB)) / 86400000);
 }
+export const round1 = (n) => Math.round(n * 10) / 10;
+
+// Objectif « temps normal » de référence (repère pour le bandeau + fallback).
+export const OBJECTIF_REF = 28;
 
 // Somme d'une plage d'indices [from..to], clampée aux bornes, null/NaN ignorés.
 function sumRange(arr, from, to) {
@@ -67,8 +71,59 @@ export function findTodayIdx(times, today) {
   return best;
 }
 
+// --- Objectif hebdo DYNAMIQUE (évapotranspiration ET₀) ------------------
+// Le « combien » s'adapte au climat : objectif = Σ(ET₀ 7 j) × Kc, borné 15–55.
+// Fenêtre 7 j = 3 passés + aujourd'hui + 3 prévus → anticipe la canicule.
+// ET₀ absente/incomplète → repli sur l'objectif fixe (jamais faux en silence).
+export function computeObjectif({ weather, reglages, today }) {
+  const r = { ...DEFAULTS, ...(reglages || {}) };
+  const et0 = weather?.et0 || weather?.et0_fao_evapotranspiration || [];
+  const times = weather?.time || [];
+  const idx = findTodayIdx(times, today);
+
+  // ET₀ moyen des 3 prochains jours → seuil canicule (≥ 6 mm/j).
+  const next3 = [];
+  for (let i = idx + 1; i <= idx + 3; i++) {
+    const v = et0[i];
+    if (i >= 0 && typeof v === 'number' && Number.isFinite(v)) next3.push(v);
+  }
+  const et0_mean3 = next3.length ? next3.reduce((a, b) => a + b, 0) / next3.length : null;
+  const canicule = et0_mean3 != null && et0_mean3 >= 6;
+  const meanOut = et0_mean3 != null ? round1(et0_mean3) : null;
+
+  // Mode manuel : court-circuite le calcul dynamique.
+  if (r.objectif_manuel) {
+    return { objectif: r.objectif_mm, source: 'manuel', canicule, et0_7j: null, et0_mean3: meanOut, ref: OBJECTIF_REF };
+  }
+
+  // Fenêtre 7 j (3 passés + aujourd'hui + 3 prévus). Toutes les valeurs requises.
+  const win = [];
+  let complete = idx !== -1;
+  for (let i = idx - 3; i <= idx + 3; i++) {
+    const v = et0[i];
+    if (typeof v === 'number' && Number.isFinite(v)) win.push(v);
+    else complete = false;
+  }
+
+  if (!complete || win.length < 7) {
+    return { objectif: OBJECTIF_REF, source: 'fallback', canicule, et0_7j: null, et0_mean3: meanOut, ref: OBJECTIF_REF };
+  }
+
+  const kc = Number(r.kc) > 0 ? Number(r.kc) : 0.8;
+  const sum = win.reduce((a, b) => a + b, 0);
+  const objectif = Math.max(15, Math.min(55, Math.round(sum * kc)));
+  return { objectif, source: 'et0', canicule, et0_7j: round1(sum), et0_mean3: meanOut, kc, ref: OBJECTIF_REF };
+}
+
+// Constantes horticoles resserrées en canicule (rendues visibles dans l'UI).
+export function effConstants(canicule) {
+  return canicule
+    ? { ...CONSTANTS, SPACING_DAYS: 2, MIN_SESSION_MM: 8 } // MAX reste 20 (ruissellement)
+    : CONSTANTS;
+}
+
 // --- Calcul de base -----------------------------------------------------
-// weather   : { time:[...], precipitation_sum:[...], precipitation_probability_max:[...] }
+// weather   : { time:[...], precipitation_sum:[...], precipitation_probability_max:[...], et0:[...] }
 // arrosages : [{ jour:'YYYY-MM-DD', minutes:Number, auteur:String }, ...]
 // reglages  : { objectif_mm, debit_mm_h }
 // today     : 'YYYY-MM-DD' (date locale Europe/Zurich, fournie par l'appelant)
@@ -104,9 +159,10 @@ export function computeMetrics({ weather, arrosages, reglages, today }) {
   }
   const arrose_mm = (minutes7 / 60) * r.debit_mm_h;
 
+  const obj = computeObjectif({ weather, reglages: r, today });
   const deficit = Math.max(
     0,
-    r.objectif_mm - pluie_recue - pluie_prevue - arrose_mm
+    obj.objectif - pluie_recue - pluie_prevue - arrose_mm
   );
 
   // Dernier arrosage « significatif » (équiv. mm >= SIGNIF_MM), <= aujourd'hui.
@@ -134,19 +190,26 @@ export function computeMetrics({ weather, arrosages, reglages, today }) {
     deficit,
     lastSignif,
     reglages: r,
+    objectif: obj.objectif,
+    objectif_source: obj.source,   // 'et0' | 'manuel' | 'fallback'
+    canicule: obj.canicule,
+    et0_7j: obj.et0_7j,
+    et0_mean3: obj.et0_mean3,
+    obj_ref: obj.ref,
+    kc: obj.kc ?? null,
   };
 }
 
 // --- Moteur de décision : 5 règles, dans l'ordre de priorité -----------
 // Renvoie un objet décision STRUCTURÉ (données brutes, pas de texte d'UI).
-export function decide(input) {
-  const C = CONSTANTS;
+function baseDecide(input) {
   const m = computeMetrics(input);
   const r = m.reglages;
 
   if (!m.ok) {
     return { etat: 'erreur', metrics: m };
   }
+  const C = effConstants(m.canicule); // 3→2 j d'espacement, MIN 10→8 mm en canicule
 
   const mmToMin = (mm) => Math.round((mm / r.debit_mm_h) * 60);
   const base = { metrics: m };
@@ -196,6 +259,62 @@ export function decide(input) {
   return { ...base, etat: 'arroser', session_mm, minutes, deuxieme };
 }
 
+// --- Couche « contraintes » : absences (père/fils au même jardin) -------
+// Post-traite la décision de base SANS toucher aux 5 règles (une seule logique) :
+//   - jour où l'on est absent (après le départ, jusqu'au retour) → « absent »
+//     (personne au jardin ; on ne recommande pas d'arroser dans le vide) ;
+//   - départ aujourd'hui ou demain + besoin réel qui tombera pendant l'absence
+//     + peu de pluie prévue → « avant-depart » : arrose avant de partir.
+// contraintes : [{ type:'absence', debut:'YYYY-MM-DD', fin:'YYYY-MM-DD' }]
+function withContraintes(base, input) {
+  const abs = (input.contraintes || []).filter((c) => c && c.type === 'absence' && c.debut && c.fin);
+  if (!abs.length || !base.metrics?.ok) return base;
+  const C = effConstants(base.metrics.canicule);
+
+  const today = input.today;
+  const tTo = parseISO(today);
+  const r = base.metrics.reglages;
+
+  // 1) Absent AUJOURD'HUI (strictement après le jour de départ, jusqu'au retour).
+  //    Le jour de départ lui-même reste une occasion d'arroser (cf. règle 2).
+  const during = abs.find((c) => parseISO(c.debut) < tTo && tTo <= parseISO(c.fin));
+  if (during) {
+    return { ...base, etat: 'absent', baseEtat: base.etat, absence: during };
+  }
+
+  // 2) Départ aujourd'hui (debut === today) ou demain (debut === today+1) :
+  //    dernière chance d'arroser avant de partir.
+  const tTom = parseISO(addDays(today, 1));
+  const leaving = abs.find((c) => { const d = parseISO(c.debut); return d === tTo || d === tTom; });
+  if (leaving) {
+    // Besoin réel pendant l'absence ? Déficit projeté au dernier jour d'absence
+    // (sans arroser d'ici là) + peu de pluie sur la fenêtre.
+    const mFin = computeMetrics({ ...input, today: leaving.fin });
+    const defFin = mFin.ok ? mFin.deficit : 0;
+    const times = input.weather?.time || [];
+    const precip = input.weather?.precipitation_sum || [];
+    let rainAbs = 0;
+    for (let i = 0; i < times.length; i++) {
+      const t = parseISO(times[i]);
+      if (t >= parseISO(leaving.debut) && t <= parseISO(leaving.fin)) {
+        const v = precip[i];
+        if (typeof v === 'number' && Number.isFinite(v)) rainAbs += v;
+      }
+    }
+    if (defFin >= C.MIN_SESSION_MM && rainAbs < C.RAIN_SOON_MM) {
+      const session_mm = Math.min(defFin, C.MAX_SESSION_MM);
+      const minutes = Math.round((session_mm / r.debit_mm_h) * 60);
+      return { ...base, etat: 'avant-depart', session_mm, minutes, absence: leaving, deficitFin: round1(defFin) };
+    }
+  }
+  return base;
+}
+
+// Décision publique : règles de base + couche contraintes. Source unique.
+export function decide(input) {
+  return withContraintes(baseDecide(input), input);
+}
+
 // --- Projection « semaine à venir » ------------------------------------
 // Rejoue le moteur pour chaque jour de today..today+6, en SIMULANT qu'on suit
 // la reco : si un jour est « arroser », on ajoute un arrosage virtuel ce jour-là
@@ -215,7 +334,7 @@ export function projectWeek(input) {
     }
     const d = decide({ ...input, arrosages: sim, today: day });
     out.push({ jour: day, etat: d.etat, minutes: d.minutes ?? null });
-    if (d.etat === 'arroser') {
+    if (d.etat === 'arroser' || d.etat === 'avant-depart') {
       sim = sim.concat({ jour: day, minutes: d.minutes, auteur: null });
     }
   }

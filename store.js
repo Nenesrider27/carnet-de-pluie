@@ -97,3 +97,40 @@ export async function deleteSubscription(endpoint) {
   });
   await ok(res, 'delete subscription');
 }
+
+// --- Contraintes (absences) — étape « chat » ---------------------------
+// Liste les contraintes actives (tableau [{ id, type, debut, fin, note, auteur }]).
+export async function getContraintes() {
+  const res = await fetch(`${REST}/contraintes?select=*&order=debut.asc`, {
+    headers: headers(), cache: 'no-store',
+  });
+  await ok(res, 'GET contraintes');
+  return res.json();
+}
+
+// Ajoute une contrainte (ex. une fenêtre d'absence). Renvoie la ligne créée.
+export async function addContrainte({ type = 'absence', debut, fin, note, auteur }) {
+  const res = await fetch(`${REST}/contraintes`, {
+    method: 'POST',
+    headers: { ...headers(), Prefer: 'return=representation' },
+    body: JSON.stringify({ type, debut, fin, note: note || null, auteur: auteur || null }),
+  });
+  await ok(res, 'add contrainte');
+  return (await res.json())[0];
+}
+
+// Supprime une contrainte par id.
+export async function deleteContrainte(id) {
+  const res = await fetch(`${REST}/contraintes?id=eq.${encodeURIComponent(id)}`, {
+    method: 'DELETE', headers: { ...headers(), Prefer: 'return=minimal' },
+  });
+  await ok(res, 'delete contrainte');
+}
+
+// Purge les contraintes passées (fin < dateIso).
+export async function purgeContraintesBefore(dateIso) {
+  const res = await fetch(`${REST}/contraintes?fin=lt.${dateIso}`, {
+    method: 'DELETE', headers: { ...headers(), Prefer: 'return=minimal' },
+  });
+  await ok(res, 'purge contraintes');
+}

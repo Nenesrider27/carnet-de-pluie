@@ -1,21 +1,28 @@
 // app.js — couche présentation.
 // La LOGIQUE d'arrosage vit dans engine.js ; l'ACCÈS partagé dans store.js.
 // Ici : orchestration, cache localStorage (offline + affichage instantané), DOM.
-import { decide, DEFAULTS, CONSTANTS, addDays, projectWeek } from './engine.js';
-import { getArrosages, getReglages, upsertArrosage, patchReglages, purgeBefore, upsertSubscription } from './store.js';
+import { decide, DEFAULTS, CONSTANTS, addDays, projectWeek, computeObjectif } from './engine.js';
+import { getArrosages, getReglages, upsertArrosage, patchReglages, purgeBefore, upsertSubscription,
+  getContraintes, addContrainte, deleteContrainte, purgeContraintesBefore } from './store.js';
 import { VAPID_PUBLIC } from './config.js';
 
 // --- Config météo ------------------------------------------------------
 const LAT = 46.2777, LON = 6.2234;
 const API_URL =
   `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
-  `&daily=precipitation_sum,precipitation_probability_max` +
+  `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max,et0_fao_evapotranspiration` +
   `&timezone=Europe%2FZurich&past_days=7&forecast_days=5&models=meteoswiss_icon_ch2`;
+// Fallback ET₀ : modèle global (si le modèle suisse ne renvoyait pas l'ET₀).
+const ET0_FALLBACK_URL =
+  `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
+  `&daily=et0_fao_evapotranspiration&timezone=Europe%2FZurich&past_days=7&forecast_days=5`;
+const WEATHER_TTL = 3 * 3600 * 1000; // 3 h : quota API (ne pas re-fetch à chaque ouverture)
 
 const LS = {
   weather: 'cp.weather',      // { data, ts }
   arrosages: 'cp.arrosages',  // [{ jour, minutes, auteur, updated_at }]  (cache de Supabase)
   reglages: 'cp.reglages',    // { objectif_mm, debit_mm_h }             (cache de Supabase)
+  contraintes: 'cp.contraintes', // [{ type, debut, fin, ... }]          (cache de Supabase)
   prenom: 'cp.prenom',        // string (identité LOCALE de l'appareil)
   onboarded: 'cp.onboarded',  // bool (onboarding vu)
 };
@@ -68,6 +75,7 @@ function ago(ts) {
 let weather = null, weatherTs = null, weatherOffline = false;
 let arrosages = [];               // source : Supabase (cache localStorage)
 let reglages = { ...DEFAULTS };   // source : Supabase (cache localStorage)
+let contraintes = [];             // absences (source Supabase, cache localStorage)
 let dataTs = null, dataOffline = false;
 let lastFailedSave = null;        // { date, min } pour le bouton « Réessayer »
 let currentArroserMinutes = 0;    // minutes recommandées (chrono / « C'est fait »)
@@ -78,19 +86,40 @@ const getPrenom = () => readLS(LS.prenom, '') || '';
 function loadCache() {
   const ca = readLS(LS.arrosages, null); if (Array.isArray(ca)) arrosages = ca;
   const cr = readLS(LS.reglages, null); if (cr) reglages = { ...DEFAULTS, ...cr };
+  const cc = readLS(LS.contraintes, null); if (Array.isArray(cc)) contraintes = cc;
   const cw = readLS(LS.weather, null); if (cw?.data) { weather = cw.data; weatherTs = cw.ts; }
 }
 
-async function loadWeather() {
+const et0AllNull = (a) => !Array.isArray(a) || a.every((x) => x == null);
+
+async function loadWeather(force = false) {
+  // Throttle : au plus un fetch réseau toutes les 3 h (quota Open-Meteo).
+  if (!force && weather && weatherTs && (Date.now() - weatherTs) < WEATHER_TTL) {
+    weatherOffline = false;
+    return;
+  }
   try {
     const res = await fetch(API_URL, { cache: 'no-store' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     if (!data?.daily?.time?.length) throw new Error('réponse météo vide');
+    let et0 = data.daily.et0_fao_evapotranspiration;
+    // Fallback ET₀ (modèle global) si absente/nulle sur le modèle suisse.
+    if (et0AllNull(et0)) {
+      try {
+        const r2 = await fetch(ET0_FALLBACK_URL, { cache: 'no-store' });
+        if (r2.ok) {
+          const d2 = await r2.json();
+          if (!et0AllNull(d2?.daily?.et0_fao_evapotranspiration)) et0 = d2.daily.et0_fao_evapotranspiration;
+        }
+      } catch { /* on gardera l'objectif de repli */ }
+    }
     weather = {
       time: data.daily.time,
       precipitation_sum: data.daily.precipitation_sum,
       precipitation_probability_max: data.daily.precipitation_probability_max,
+      temperature_2m_max: data.daily.temperature_2m_max,
+      et0,
     };
     weatherTs = Date.now();
     weatherOffline = false;
@@ -106,13 +135,21 @@ async function syncData() {
   const today = todayZurich();
   try {
     purgeBefore(addDays(today, -14)).catch((e) => console.warn('[purge]', e.message));
-    const [reg, arr] = await Promise.all([getReglages(), getArrosages()]);
+    purgeContraintesBefore(today).catch((e) => console.warn('[purge-contr]', e.message));
+    const [reg, arr, contr] = await Promise.all([getReglages(), getArrosages(), getContraintes()]);
     if (reg) {
-      reglages = { objectif_mm: Number(reg.objectif_mm), debit_mm_h: Number(reg.debit_mm_h) };
+      reglages = {
+        objectif_mm: Number(reg.objectif_mm),
+        debit_mm_h: Number(reg.debit_mm_h),
+        kc: reg.kc != null ? Number(reg.kc) : DEFAULTS.kc,
+        objectif_manuel: reg.objectif_manuel === true,
+      };
       writeLS(LS.reglages, reglages);
     }
     arrosages = Array.isArray(arr) ? arr : [];
     writeLS(LS.arrosages, arrosages);
+    contraintes = Array.isArray(contr) ? contr : [];
+    writeLS(LS.contraintes, contraintes);
     dataTs = Date.now();
     dataOffline = false;
   } catch (e) {
@@ -122,7 +159,29 @@ async function syncData() {
 }
 
 // --- Rendu -------------------------------------------------------------
-const ICONS = { arroser: '💧', presque: '🌱', attends: '⏳', fait: '✅', rien: '✅', pluie: '🌧️', erreur: '⚠️' };
+const ICONS = { arroser: '💧', presque: '🌱', attends: '⏳', fait: '✅', rien: '✅', pluie: '🌧️', erreur: '⚠️', 'avant-depart': '🧳', absent: '🚪' };
+
+// Bandeau contextuel : uniquement quand le climat sort de l'ordinaire.
+function renderClimateBanner(m) {
+  const el = $('climate-banner');
+  if (!el) return;
+  if (!m || !m.ok) { el.hidden = true; return; }
+  if (m.objectif_source === 'fallback') {
+    el.className = 'climate-banner cb-fallback';
+    el.innerHTML = `⚠️ Objectif par défaut (${m.objectif} mm) — données ET₀ indisponibles.`;
+    el.hidden = false;
+  } else if (m.canicule) {
+    el.className = 'climate-banner cb-hot';
+    el.innerHTML = `🔥 Canicule — objectif relevé à <b>${m.objectif} mm</b> (vs ${m.obj_ref} en temps normal) · sessions resserrées.`;
+    el.hidden = false;
+  } else if (m.et0_mean3 != null && m.et0_mean3 <= 3) {
+    el.className = 'climate-banner cb-cool';
+    el.innerHTML = `🌥️ Temps frais — objectif abaissé à <b>${m.objectif} mm</b> (vs ${m.obj_ref} en temps normal).`;
+    el.hidden = false;
+  } else {
+    el.hidden = true;
+  }
+}
 
 function render() {
   const today = todayZurich();
@@ -134,18 +193,20 @@ function render() {
   if (!weather) {
     renderVerdictError('Météo indisponible', 'Vérifie ta connexion, puis rouvre l\'app.', 'Aucune donnée météo — impossible de calculer une recommandation.');
     $('week-line').textContent = '';
+    renderClimateBanner(null);
   } else {
     if (weatherOffline && weatherTs) {
       nOff.textContent = `Hors ligne — météo du ${new Date(weatherTs).toLocaleString('fr-FR', { dateStyle: 'medium', timeStyle: 'short' })}`;
       nOff.classList.add('show');
     }
-    const decision = decide({ weather, arrosages, reglages, today });
+    const decision = decide({ weather, arrosages, reglages, today, contraintes });
     if (decision.etat === 'erreur') {
       renderVerdictError('Météo incomplète', 'La date du jour est absente des données.', 'Impossible de situer aujourd\'hui dans les prévisions.');
       $('week-line').textContent = '';
     } else {
       renderVerdict(decision, reglages);
       renderWeekLine(decision);
+      renderClimateBanner(decision.metrics);
     }
   }
   renderWeek();
@@ -173,16 +234,17 @@ function renderVerdict(d, reg) {
   const m = d.metrics;
   setState('state-' + d.etat);
   $('v-icon').textContent = ICONS[d.etat] || '💧';
+  const actionState = d.etat === 'arroser' || d.etat === 'avant-depart';
   $('v-tip').hidden = d.etat !== 'arroser';
-  $('v-actions').hidden = d.etat !== 'arroser';
-  if (d.etat === 'arroser') currentArroserMinutes = d.minutes;
+  $('v-actions').hidden = !actionState;
+  if (actionState) currentArroserMinutes = d.minutes;
   $('v-second').hidden = true;
 
   let title = '', subtitle = '', why = '';
   if (d.etat === 'arroser') {
     title = `Arroser <span class="acc--big">${d.minutes} min</span>`;
     subtitle = `Session de ${round1(d.session_mm)} mm, au débit de ${reg.debit_mm_h} mm/h.`;
-    why = `Il manque ${round1(m.deficit)} mm pour l'objectif de ${reg.objectif_mm} mm cette semaine.`;
+    why = `Il manque ${round1(m.deficit)} mm pour l'objectif de ${m.objectif} mm cette semaine.`;
     if (d.deuxieme) {
       $('v-second').hidden = false;
       $('v-second').textContent = `↳ puis ~${d.deuxieme.minutes} min vers ${fmtShort(d.deuxieme.jour)} (déficit > ${CONSTANTS.MAX_SESSION_MM} mm, on fractionne).`;
@@ -204,11 +266,19 @@ function renderVerdict(d, reg) {
   } else if (d.etat === 'rien') {
     title = 'Rien à faire';
     subtitle = 'Le jardin a ce qu\'il lui faut.';
-    why = `Pluie et arrosages couvrent l'objectif de ${reg.objectif_mm} mm. Rien à ajouter.`;
+    why = `Pluie et arrosages couvrent l'objectif de ${m.objectif} mm. Rien à ajouter.`;
   } else if (d.etat === 'pluie') {
     title = 'La pluie s\'en charge';
     subtitle = `${round1(m.pluie_48h)} mm attendus sous 48 h.`;
     why = 'Inutile d\'arroser juste avant une pluie annoncée. Recontrôle après.';
+  } else if (d.etat === 'avant-depart') {
+    title = `Arrose avant de partir <span class="acc--big">${d.minutes} min</span>`;
+    subtitle = 'Tu pars bientôt et personne n\'arrosera — fais-le avant de filer.';
+    why = `Chaleur prévue et pas de pluie pendant ton absence (déficit ~${round1(d.deficitFin)} mm au retour). Autant partir tranquille.`;
+  } else if (d.etat === 'absent') {
+    title = 'Tu es absent';
+    subtitle = 'Personne au jardin aujourd\'hui.';
+    why = 'Rien à faire d\'ici — la reco reprendra à ton retour.';
   }
   $('v-title').innerHTML = title;
   $('v-subtitle').textContent = subtitle;
@@ -225,19 +295,22 @@ function renderWeekLine(d) {
   $('week-line').innerHTML = `Cette semaine : <b>${m.minutes7} min</b> arrosés (~${round1(m.arrose_mm)} mm).`;
 }
 
-const WK_ICONS = { arroser: '💧', pluie: '🌧️', attends: '⏳', fait: '✅', rien: '✅', presque: '🌱', inconnu: '·' };
+const WK_ICONS = { arroser: '💧', pluie: '🌧️', attends: '⏳', fait: '✅', rien: '✅', presque: '🌱', inconnu: '·', 'avant-depart': '🧳', absent: '🚪' };
 function renderWeek() {
   const el = $('week');
   if (!weather) { el.hidden = true; return; }
   const today = todayZurich();
-  const wk = projectWeek({ weather, arrosages, reglages, today });
+  const wk = projectWeek({ weather, arrosages, reglages, today, contraintes });
   el.hidden = false;
   el.innerHTML = wk.map((d, i) => {
     const cls = 'wk-cell' + (i === 0 ? ' today' : '') + (d.etat === 'inconnu' ? ' inconnu' : '');
     const day = i === 0 ? 'auj.'
       : new Intl.DateTimeFormat('fr-FR', { weekday: 'short', timeZone: 'UTC' }).format(isoToDate(d.jour)).replace('.', '');
-    const min = d.etat === 'arroser' && d.minutes ? `${d.minutes}'` : '';
-    return `<div class="${cls}"><span class="wk-day">${day}</span><span class="wk-icon">${WK_ICONS[d.etat] || '·'}</span><span class="wk-min">${min}</span></div>`;
+    const min = (d.etat === 'arroser' || d.etat === 'avant-depart') && d.minutes ? `${d.minutes}'` : '';
+    const wi = weather.time.indexOf(d.jour);
+    const et0v = wi >= 0 && Array.isArray(weather.et0) && typeof weather.et0[wi] === 'number' ? round1(weather.et0[wi]) : null;
+    const et0Txt = et0v != null ? `<span class="wk-et0" title="évapotranspiration ${et0v} mm/j">${et0v}</span>` : '';
+    return `<div class="${cls}"><span class="wk-day">${day}</span><span class="wk-icon">${WK_ICONS[d.etat] || '·'}</span><span class="wk-min">${min}</span>${et0Txt}</div>`;
   }).join('');
 }
 
@@ -487,29 +560,40 @@ function retrySave() {
 // --- Réglages ----------------------------------------------------------
 async function saveReglages() {
   const fb = $('reglages-feedback');
-  const obj = parseFloat($('in-obj').value);
   const debit = parseFloat($('in-debit').value);
+  const kc = parseFloat($('in-kc').value);
+  const manuel = $('in-manuel').checked;
+  const obj = parseFloat($('in-obj').value);
   const prenom = $('in-prenom').value.trim();
 
-  if (!Number.isFinite(obj) || obj <= 0 || !Number.isFinite(debit) || debit <= 0) {
-    fb.className = 'save-feedback err'; fb.textContent = 'Valeurs invalides.'; return;
-  }
+  if (!Number.isFinite(debit) || debit <= 0) { fb.className = 'save-feedback err'; fb.textContent = 'Débit invalide.'; return; }
+  if (!Number.isFinite(kc) || kc <= 0) { fb.className = 'save-feedback err'; fb.textContent = 'Kc invalide.'; return; }
+  if (manuel && (!Number.isFinite(obj) || obj <= 0)) { fb.className = 'save-feedback err'; fb.textContent = 'Objectif manuel invalide.'; return; }
+
   writeLS(LS.prenom, prenom); // identité locale : toujours sauvée localement
 
   const btn = $('btn-reglages');
   btn.disabled = true; const label = btn.textContent; btn.textContent = 'Envoi…';
   fb.className = 'save-feedback'; fb.textContent = '';
   try {
-    const r = await patchReglages({ objectif_mm: obj, debit_mm_h: debit });
-    reglages = { objectif_mm: Number(r.objectif_mm), debit_mm_h: Number(r.debit_mm_h) };
+    const patch = { debit_mm_h: debit, kc, objectif_manuel: manuel };
+    if (manuel && Number.isFinite(obj)) patch.objectif_mm = obj;
+    const r = await patchReglages(patch);
+    reglages = {
+      objectif_mm: Number(r.objectif_mm),
+      debit_mm_h: Number(r.debit_mm_h),
+      kc: r.kc != null ? Number(r.kc) : DEFAULTS.kc,
+      objectif_manuel: r.objectif_manuel === true,
+    };
     writeLS(LS.reglages, reglages);
     fb.className = 'save-feedback ok';
     fb.textContent = '✓ Réglages enregistrés.';
+    fillSettings();
     render();
   } catch (e) {
     console.warn('[reglages] échec :', e.message);
     fb.className = 'save-feedback err';
-    fb.textContent = 'Prénom gardé localement, mais l\'objectif/débit n\'a pas pu être synchronisé (hors ligne ?).';
+    fb.textContent = 'Échec de synchro (hors ligne ? ou colonnes Kc/manuel pas encore ajoutées à la table réglages).';
   } finally {
     btn.disabled = false; btn.textContent = label;
   }
@@ -520,7 +604,20 @@ function fillSettings() {
   const set = (id, v) => { const el = $(id); if (el && document.activeElement !== el) el.value = v; };
   set('in-obj', reglages.objectif_mm);
   set('in-debit', reglages.debit_mm_h);
+  set('in-kc', reglages.kc ?? DEFAULTS.kc);
   set('in-prenom', getPrenom());
+  const manuel = !!reglages.objectif_manuel;
+  const chk = $('in-manuel'); if (chk && document.activeElement !== chk) chk.checked = manuel;
+  const mf = $('manuel-field'); if (mf) mf.hidden = !manuel;
+  // Ligne « objectif calculé »
+  const oc = $('obj-computed');
+  if (oc) {
+    const o = weather ? computeObjectif({ weather, reglages, today: todayZurich() }) : null;
+    if (!o) oc.textContent = 'Objectif de la semaine : —';
+    else if (o.source === 'manuel') oc.innerHTML = `Objectif manuel : <b>${o.objectif} mm</b>/semaine.`;
+    else if (o.source === 'fallback') oc.innerHTML = `Objectif : <b>${o.objectif} mm</b> — par défaut (ET₀ indisponible).`;
+    else oc.innerHTML = `Objectif de la semaine : <b>${o.objectif} mm</b> — calculé depuis l'ET₀ (Σ7 j ${o.et0_7j} mm × Kc ${o.kc}).`;
+  }
 }
 
 function initForm() {
@@ -530,6 +627,7 @@ function initForm() {
   $('btn-save').addEventListener('click', saveArrosage);
   $('btn-reglages').addEventListener('click', saveReglages);
   $('in-min').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveArrosage(); });
+  $('in-manuel').addEventListener('change', (e) => { const mf = $('manuel-field'); if (mf) mf.hidden = !e.target.checked; });
   // Chrono / « C'est fait »
   $('btn-chrono').addEventListener('click', () => startChrono(currentArroserMinutes));
   $('btn-done').addEventListener('click', async () => {

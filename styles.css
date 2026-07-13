@@ -215,6 +215,8 @@ header { margin-bottom: 20px; }
 .state-fait    { --accent: var(--sage); }
 .state-rien    { --accent: var(--sage); }
 .state-pluie   { --accent: var(--blue); }
+.state-avant-depart { --accent: var(--amber); }
+.state-absent  { --accent: var(--blue); }
 .state-erreur  { --accent: var(--red); }
 
 /* ---- Bande « semaine à venir » ---- */
@@ -256,6 +258,32 @@ header { margin-bottom: 20px; }
   white-space: nowrap;
 }
 .wk-cell.inconnu { opacity: .38; }
+.wk-et0 { font-family: var(--font-mono); font-size: .5rem; color: var(--ink-faint); }
+.wk-cell.today .wk-et0 { color: var(--amber); }
+
+/* ---- Bandeau climat (canicule / frais / repli) ---- */
+.climate-banner {
+  margin-bottom: 12px;
+  padding: 11px 15px;
+  border-radius: var(--radius-sm);
+  font-size: .9rem;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+.climate-banner[hidden] { display: none; }
+.climate-banner b { font-weight: 700; }
+.climate-banner.cb-hot { color: #f2c48a; background: rgba(237, 165, 62, .10); border-color: rgba(237, 165, 62, .34); }
+.climate-banner.cb-cool { color: #bcd6ef; background: rgba(107, 167, 222, .10); border-color: rgba(107, 167, 222, .30); }
+.climate-banner.cb-fallback { color: var(--ink-dim); background: rgba(255, 255, 255, .04); border-color: var(--line); }
+
+/* ---- Réglages : objectif calculé + case manuel ---- */
+.obj-computed { font-size: .92rem; color: var(--ink); margin: 0 0 14px; line-height: 1.45; }
+.obj-computed b { color: var(--amber); }
+.check-row {
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 14px; font-size: .9rem; color: var(--ink-dim); cursor: pointer;
+}
+.check-row input { width: 18px; height: 18px; accent-color: var(--amber); flex: 0 0 auto; }
 
 /* ---- Note de synchro (l'autre a arrosé) ---- */
 .sync-note {
