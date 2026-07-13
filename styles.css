@@ -255,7 +255,9 @@ header { margin-bottom: 20px; }
   color: var(--ink-faint);
 }
 .wk-cell.today .wk-day { color: var(--amber); font-weight: 500; }
-.wk-icon { font-size: 1.05rem; line-height: 1.1; }
+/* Icônes du bandeau adoucies : le héros ambre reste la seule vraie audace. */
+.wk-icon { font-size: 1.02rem; line-height: 1.1; filter: saturate(.72) brightness(.97); }
+.wk-cell.today .wk-icon { filter: none; }
 .wk-min {
   font-family: var(--font-mono);
   font-size: .6rem;
@@ -263,8 +265,19 @@ header { margin-bottom: 20px; }
   white-space: nowrap;
 }
 .wk-cell.inconnu { opacity: .38; }
-.wk-et0 { font-family: var(--font-mono); font-size: .58rem; color: var(--ink-dim); }
+.wk-et0 { font-family: var(--font-mono); font-size: .58rem; color: var(--ink-faint); }
 .wk-cell.today .wk-et0 { color: var(--amber); }
+
+/* Légende du bandeau semaine : lève l'ambiguïté « le chiffre n'est pas la pluie ». */
+.week-key {
+  margin-top: 9px;
+  display: flex; flex-direction: column; gap: 3px;
+  font-family: var(--font-mono);
+  font-size: .66rem;
+  line-height: 1.45;
+  color: var(--ink-faint);
+}
+.week-key-note b { color: var(--ink-dim); }
 
 /* ---- Bandeau climat (canicule / frais / repli) ---- */
 .climate-banner {

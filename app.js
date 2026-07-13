@@ -264,7 +264,9 @@ function renderWeekLine(d) {
 const WK_ICONS = { arroser: '💧', pluie: '🌧️', attends: '⏳', fait: '✅', rien: '✅', presque: '🌱', inconnu: '·', 'avant-depart': '🧳', absent: '🚪' };
 function renderWeek() {
   const el = $('week');
-  if (!weather) { el.hidden = true; return; }
+  const key = $('week-key');
+  if (!weather) { el.hidden = true; if (key) key.hidden = true; return; }
+  if (key) key.hidden = false;
   const today = todayLocal();
   const wk = projectWeek({ weather, arrosages, reglages, today, contraintes });
   el.hidden = false;
@@ -624,6 +626,7 @@ async function submitAuth() {
   const btn = $('auth-submit'); btn.disabled = true; const label = btn.textContent; btn.textContent = '…';
   setAuthError('');
   try {
+    let user = null;
     if (authMode === 'signup') {
       const data = await auth.signUp(email, pass);
       if (!data?.session) {
@@ -632,10 +635,12 @@ async function submitAuth() {
         setAuthMode('signin');
         return;
       }
+      user = data.user;
     } else {
-      await auth.signIn(email, pass);
+      const data = await auth.signIn(email, pass);
+      user = data.user;
     }
-    // onAuthChange déclenchera l'entrée dans l'app.
+    if (user) await enterApp(user);   // entrée immédiate (ne pas attendre un reload)
   } catch (e) {
     setAuthError(e.message);
   } finally {
