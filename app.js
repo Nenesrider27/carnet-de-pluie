@@ -4,7 +4,7 @@
 import { decide, DEFAULTS, CONSTANTS, addDays, projectWeek, computeObjectif } from './engine.js';
 import { getArrosages, getReglages, upsertArrosage, patchReglages, purgeBefore, upsertSubscription,
   getContraintes, addContrainte, deleteContrainte, purgeContraintesBefore } from './store.js';
-import { VAPID_PUBLIC } from './config.js';
+import { VAPID_PUBLIC, CHAT_URL, SUPA_KEY } from './config.js';
 
 // --- Config météo ------------------------------------------------------
 const LAT = 46.2777, LON = 6.2234;
@@ -628,6 +628,8 @@ function initForm() {
   $('btn-reglages').addEventListener('click', saveReglages);
   $('in-min').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveArrosage(); });
   $('in-manuel').addEventListener('change', (e) => { const mf = $('manuel-field'); if (mf) mf.hidden = !e.target.checked; });
+  $('chat-send').addEventListener('click', chatSend);
+  $('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') chatSend(); });
   // Chrono / « C'est fait »
   $('btn-chrono').addEventListener('click', () => startChrono(currentArroserMinutes));
   $('btn-done').addEventListener('click', async () => {
@@ -664,6 +666,101 @@ function initOnboarding() {
     if (idx < slides.length - 1) { show(++idx); }
     else { writeLS(LS.onboarded, true); overlay.hidden = true; }
   });
+}
+
+// --- Assistant (chat Claude via Edge Function) ------------------------
+let chatHistory = [];
+let chatSending = false;
+const VERDICT_LABEL = {
+  arroser: 'arroser', 'avant-depart': 'arroser avant de partir', presque: 'presque bon',
+  attends: 'attends', fait: 'fait pour aujourd\'hui', rien: 'rien à faire',
+  pluie: 'la pluie s\'en charge', absent: 'absent', erreur: 'météo indisponible',
+};
+
+function chatContext() {
+  const today = todayZurich();
+  let m = null, etat = 'inconnu', minutes = null;
+  if (weather) {
+    const d = decide({ weather, arrosages, reglages, today, contraintes });
+    m = d.metrics; etat = VERDICT_LABEL[d.etat] || d.etat; minutes = d.minutes ?? null;
+  }
+  return {
+    today, verdict: etat, minutes,
+    objectif_mm: m?.objectif ?? null,
+    pluie_prevue: m ? round1(m.pluie_prevue) : null,
+    pluie_48h: m ? round1(m.pluie_48h) : null,
+    debit_mm_h: reglages.debit_mm_h,
+    arrosages_recents: [...arrosages].sort((a, b) => (a.jour < b.jour ? 1 : -1)).slice(0, 5).map((a) => `${a.jour} ${a.minutes}min`).join(', ') || 'aucun',
+    contraintes: contraintes.map((c) => `${c.type} ${c.debut}→${c.fin}`).join(', ') || 'aucune',
+  };
+}
+
+function chatBubble(role, text) {
+  const log = $('chat-log');
+  const el = document.createElement('div');
+  el.className = 'chat-msg ' + (role === 'user' ? 'user' : 'bot');
+  el.textContent = text;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
+async function chatSend() {
+  if (chatSending) return;
+  const input = $('chat-input');
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  chatHistory.push({ role: 'user', content: text });
+  chatBubble('user', text);
+  chatSending = true;
+  const btn = $('chat-send'); btn.disabled = true;
+  const thinking = chatBubble('bot', '…');
+  try {
+    const res = await fetch(CHAT_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY },
+      body: JSON.stringify({ messages: chatHistory, context: chatContext() }),
+    });
+    if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + res.status)); }
+    const data = await res.json();
+    thinking.remove();
+    const reply = data.reply || '(réponse vide)';
+    chatHistory.push({ role: 'assistant', content: reply });
+    chatBubble('bot', reply);
+    if (data.action && data.action.type === 'absence') renderChatAction(data.action);
+  } catch (e) {
+    thinking.remove();
+    console.warn('[chat]', e.message);
+    chatBubble('bot', '⚠️ Assistant indisponible (' + e.message + '). Il n\'est peut-être pas encore déployé.');
+  } finally {
+    chatSending = false; btn.disabled = false;
+  }
+}
+
+function renderChatAction(action) {
+  const log = $('chat-log');
+  const wrap = document.createElement('div');
+  wrap.className = 'chat-action';
+  const b = document.createElement('button');
+  b.className = 'btn-primary';
+  b.textContent = '✓ Appliquer : ' + (action.resume || `absence ${action.debut} → ${action.fin}`);
+  b.addEventListener('click', async () => {
+    b.disabled = true; b.textContent = 'Enregistrement…';
+    try {
+      await addContrainte({ type: 'absence', debut: action.debut, fin: action.fin, note: action.resume, auteur: getPrenom() });
+      await syncData();
+      render();
+      wrap.className = 'chat-action done';
+      wrap.textContent = '✓ Enregistré — le dashboard est à jour.';
+    } catch (e) {
+      b.disabled = false; b.textContent = '✓ Appliquer';
+      chatBubble('bot', '⚠️ Échec de l\'enregistrement : ' + e.message);
+    }
+  });
+  wrap.appendChild(b);
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
 }
 
 async function init() {

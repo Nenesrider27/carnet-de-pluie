@@ -62,6 +62,21 @@
     <div class="sync-note" id="sync-note" hidden></div>
     <div class="week-line" id="week-line"></div>
 
+    <!-- Assistant (chat Claude) : absences, questions -->
+    <details id="chat-details">
+      <summary>💬 Assistant — absences, questions</summary>
+      <div class="details-body">
+        <div class="chat-log" id="chat-log">
+          <div class="chat-msg bot">Dis-moi si tu pars (« absent vendredi 17h à dimanche 23h »), ou pose une question sur l'arrosage. J'adapte la reco.</div>
+        </div>
+        <div class="chat-input-row">
+          <input type="text" id="chat-input" placeholder="ex. absent ce week-end, il fait très chaud" autocomplete="off" />
+          <button class="btn-primary" id="chat-send">Envoyer</button>
+        </div>
+        <p class="hint" id="chat-hint"></p>
+      </div>
+    </details>
+
     <!-- Pourquoi (replié) -->
     <details>
       <summary>Pourquoi arroser comme ça&nbsp;?</summary>
