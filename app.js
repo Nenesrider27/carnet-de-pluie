@@ -777,6 +777,14 @@ async function init() {
 
 // Service worker : cache hors-ligne + réception des push.
 if ('serviceWorker' in navigator) {
+  // Quand un nouveau SW prend le contrôle (après un déploiement), recharger une
+  // fois pour charger la version cohérente (HTML+JS+CSS du même déploiement).
+  let swReloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (swReloaded) return;
+    swReloaded = true;
+    window.location.reload();
+  });
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('sw.js').catch((e) => console.warn('[sw]', e.message));
   });

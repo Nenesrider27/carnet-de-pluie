@@ -1,6 +1,6 @@
 // sw.js — service worker : cache hors-ligne de l'app + (étape 4) réception des push.
 // Bump VERSION à chaque déploiement pour invalider l'ancien cache.
-const VERSION = 'cp-v3';
+const VERSION = 'cp-v4';
 
 // Coquille de l'app (même origine) préchargée à l'installation.
 const CORE = [
@@ -37,10 +37,12 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Même origine : navigation → network-first (maj appliquée en ligne, cache si offline),
-  // assets → stale-while-revalidate (affichage instantané + maj en arrière-plan).
+  // Même origine (coquille app) : cache-first depuis le cache VERSIONNÉ.
+  // Crucial : HTML, JS et CSS proviennent TOUS du même déploiement (une version
+  // de cache = un déploiement atomique) → jamais de mélange ancien-JS/nouveau-HTML.
+  // La mise à jour se fait via le bump de VERSION (nouveau SW → nouveau cache).
   if (url.origin === self.location.origin) {
-    e.respondWith(req.mode === 'navigate' ? networkFirst(req) : staleWhileRevalidate(req));
+    e.respondWith(cacheFirst(req));
   }
 });
 
@@ -52,27 +54,10 @@ async function cacheFirst(req) {
     const res = await fetch(req);
     if (res.ok) c.put(req, res.clone());
     return res;
-  } catch (e) { return hit || Response.error(); }
-}
-
-async function networkFirst(req) {
-  const c = await caches.open(VERSION);
-  try {
-    const res = await fetch(req);
-    if (res.ok) c.put(req, res.clone());
-    return res;
   } catch (e) {
-    return (await c.match(req)) || (await c.match('./index.html')) || Response.error();
+    if (req.mode === 'navigate') return (await c.match('./index.html')) || (await c.match('./')) || Response.error();
+    return Response.error();
   }
-}
-
-async function staleWhileRevalidate(req) {
-  const c = await caches.open(VERSION);
-  const hit = await c.match(req);
-  const net = fetch(req)
-    .then((res) => { if (res.ok) c.put(req, res.clone()); return res; })
-    .catch(() => hit);
-  return hit || net;
 }
 
 // --- Notifications push (câblées à l'étape 4) --------------------------
