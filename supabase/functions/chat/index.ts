@@ -55,9 +55,12 @@ const TOOLS = [
 
 function systemPrompt(context: any): string {
   const c = context || {};
+  const lieu = c.lieu || c.domicile || 'un jardin';
+  const nom = c.domicile ? `« ${c.domicile} »` : 'ce jardin';
+  const partage = c.membres ? `, partagé entre ${c.membres}` : '';
   return [
-    "Tu es l'assistant du « Carnet de pluie », un carnet d'arrosage pour un jardin à Anières (Suisse, GE), partagé entre Ernest et son père.",
-    "Un moteur déterministe (5 règles + météo MétéoSuisse) calcule DÉJÀ s'il faut arroser et combien de minutes. Tu ne décides JAMAIS la durée toi-même : tu peux seulement rappeler celle du contexte.",
+    `Tu es l'assistant du « Carnet de pluie », un carnet d'arrosage pour le domicile ${nom} (${lieu})${partage}.`,
+    "Un moteur déterministe (5 règles + météo Open-Meteo) calcule DÉJÀ s'il faut arroser et combien de minutes. Tu ne décides JAMAIS la durée toi-même : tu peux seulement rappeler celle du contexte.",
     'Ton rôle :',
     "1) répondre en français, court et concret, aux questions sur l'arrosage ;",
     "2) quand l'utilisateur mentionne une absence (dates où personne n'arrosera), proposer de l'enregistrer via l'outil proposer_action — n'appelle l'outil que si tu as des dates claires ; sinon, demande-les ou conseille simplement.",

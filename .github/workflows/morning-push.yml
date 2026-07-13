@@ -26,5 +26,8 @@ jobs:
       - name: Envoyer le rappel
         env:
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          # Clé service_role (nouveau format sb_secret_…) : bypass RLS pour lire
+          # tous les domiciles. À ajouter dans Settings → Secrets → Actions.
+          SB_SECRET: ${{ secrets.SB_SECRET }}
           FORCE: ${{ github.event.inputs.force }}
         run: node scripts/morning-push.mjs

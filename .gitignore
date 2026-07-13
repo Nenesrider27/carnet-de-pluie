@@ -1,3 +1,14 @@
 .DS_Store
 node_modules/
 *.log
+
+# Secrets — JAMAIS committés (tokens Supabase, clés service_role, PAT…)
+.env
+.env.*
+*.secret
+secrets/
+
+# Artefacts de test navigateur
+.playwright-mcp/
+*-screen*.png
+signup-*.png

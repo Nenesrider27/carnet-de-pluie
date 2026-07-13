@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0E141A" />
   <meta name="color-scheme" content="dark" />
-  <title>Carnet de pluie — Anières</title>
+  <title>Carnet de pluie</title>
 
   <!-- PWA -->
   <link rel="manifest" href="manifest.json" />
@@ -25,16 +25,20 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <main class="wrap">
+  <main class="wrap" id="app-main" hidden>
     <!-- Bandeaux d'état réseau -->
     <div id="notice-offline" class="notice offline" role="status"></div>
     <div id="notice-error" class="notice error" role="alert"></div>
 
     <header>
-      <div class="wordmark">Carnet de pluie</div>
-      <div class="dateline">
-        <span id="dateToday">—</span> <span class="loc">· Anières</span>
+      <div class="header-top">
+        <div class="wordmark">Carnet de pluie</div>
+        <div class="header-actions">
+          <select id="domicile-select" class="domicile-select" aria-label="Choisir le domicile"></select>
+          <button id="btn-signout" class="icon-btn" type="button" title="Se déconnecter" aria-label="Se déconnecter">⎋</button>
+        </div>
       </div>
+      <div class="dateline"><span id="dateToday">—</span></div>
     </header>
 
     <!-- Bandeau climat (canicule / temps frais / repli ET₀) -->
@@ -137,6 +141,10 @@
     <details>
       <summary>Réglages</summary>
       <div class="details-body">
+        <div class="setting">
+          <button class="btn-ghost" id="btn-share" type="button" style="width:100%">👥 Partager ce domicile</button>
+          <p class="hint">Invite un proche par lien : il rejoint ce domicile et voit les mêmes données d'arrosage.</p>
+        </div>
         <div class="setting" id="push-setting" hidden>
           <button class="btn-primary" id="btn-push" style="width:100%">🔔 Activer les notifications</button>
           <p class="hint" id="push-hint">Rappel le matin quand il faut arroser. À activer séparément sur chaque téléphone.</p>
@@ -179,10 +187,78 @@
     <div class="synced" id="synced"></div>
 
     <footer>
-      Données&nbsp;: MétéoSuisse (ICON&nbsp;CH2, 2&nbsp;km) via Open-Meteo · Anières<br />
+      Données&nbsp;: Open-Meteo (meilleur modèle météo local)<br />
       Arrosage manuel — pas de connexion au système.
     </footer>
   </main>
+
+  <!-- Écran de connexion / inscription -->
+  <div class="auth-overlay" id="auth" hidden>
+    <div class="auth-card">
+      <div class="onboard-icon">💧</div>
+      <h2 id="auth-title">Connexion</h2>
+      <p class="auth-sub">Ton carnet d'arrosage intelligent. Un compte, un ou plusieurs domiciles, partagés avec qui tu veux.</p>
+      <div class="field">
+        <label for="auth-email">Email</label>
+        <input type="email" id="auth-email" autocomplete="email" placeholder="toi@exemple.fr" />
+      </div>
+      <div class="field">
+        <label for="auth-pass">Mot de passe</label>
+        <input type="password" id="auth-pass" autocomplete="current-password" placeholder="••••••••" />
+      </div>
+      <div class="auth-error" id="auth-error" role="alert" hidden></div>
+      <button class="btn-primary" id="auth-submit" type="button" style="width:100%">Se connecter</button>
+      <a href="#" class="auth-forgot" id="auth-forgot">Mot de passe oublié&nbsp;?</a>
+      <p class="auth-toggle" id="auth-toggle"></p>
+    </div>
+  </div>
+
+  <!-- Feuille : ajouter / configurer un domicile -->
+  <div class="sheet" id="domicile-form" hidden>
+    <div class="sheet-card">
+      <h2>Nouveau domicile</h2>
+      <div class="field">
+        <label for="df-nom">Nom du domicile</label>
+        <input type="text" id="df-nom" maxlength="40" placeholder="ex. Île de Ré" />
+      </div>
+      <div class="field">
+        <label for="df-adresse">Adresse ou ville</label>
+        <div class="df-row">
+          <input type="text" id="df-adresse" placeholder="ex. Anières, ou 12 rue de la Gare" autocomplete="off" />
+          <button type="button" class="btn-ghost" id="df-search">Rechercher</button>
+        </div>
+      </div>
+      <button type="button" class="btn-ghost" id="df-mypos" style="width:100%">📍 Utiliser ma position actuelle</button>
+      <div class="df-results" id="df-results"></div>
+      <div class="df-coords" id="df-coords"></div>
+      <p class="df-attrib">Géocodage&nbsp;: Open-Meteo · © OpenStreetMap</p>
+      <div class="df-error" id="df-error" role="alert"></div>
+      <div class="sheet-actions">
+        <button class="btn-primary" id="df-save" type="button">Créer le domicile</button>
+        <button class="btn-ghost" id="df-cancel" type="button">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Feuille : partage du domicile -->
+  <div class="sheet" id="share-panel" hidden>
+    <div class="sheet-card">
+      <h2>Partager ce domicile</h2>
+      <p class="hint">Génère un lien&nbsp;: la personne crée un compte (ou se connecte) et rejoint ce domicile. Les données d'arrosage sont communes. Lien révocable, valable 7&nbsp;jours.</p>
+      <button class="btn-primary" id="btn-gen-invite" type="button" style="width:100%">🔗 Générer un lien d'invitation</button>
+      <div class="share-link-box" id="share-link-box" hidden>
+        <input type="text" id="share-link" readonly />
+        <button class="btn-ghost" id="share-copy" type="button">Copier</button>
+      </div>
+      <h3>Membres</h3>
+      <ul class="share-list" id="share-members"></ul>
+      <h3>Invitations actives</h3>
+      <ul class="share-list" id="share-invites"></ul>
+      <div class="sheet-actions">
+        <button class="btn-ghost" id="share-close" type="button">Fermer</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Onboarding (1er lancement) -->
   <div class="onboard" id="onboard" hidden>

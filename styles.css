@@ -735,6 +735,113 @@ footer {
 .onboard-dots .dot.on { background: var(--amber); }
 .onboard-nav .btn-primary { flex: 0 0 auto; padding-left: 26px; padding-right: 26px; }
 
+/* =====================================================================
+   Comptes & domiciles : en-tête, écran auth, feuilles (domicile / partage)
+   ===================================================================== */
+.header-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.domicile-select {
+  font-family: var(--font-mono); font-size: .8rem; color: var(--ink);
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 7px 12px; max-width: 48vw;
+  -webkit-appearance: none; appearance: none; cursor: pointer; min-height: 38px;
+}
+.icon-btn {
+  background: transparent; color: var(--ink-faint); border: 1px solid var(--line);
+  border-radius: 999px; width: 38px; height: 38px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 1.05rem;
+}
+.icon-btn:hover { color: var(--ink); background: rgba(255,255,255,.04); }
+
+/* Écran d'authentification (overlay plein écran) */
+.auth-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: radial-gradient(120% 70% at 50% 0%, #1A2230 0%, #0B0F13 62%);
+  display: flex; align-items: center; justify-content: center;
+  padding: max(24px, env(safe-area-inset-top)) 24px calc(24px + env(safe-area-inset-bottom));
+}
+.auth-card { width: 100%; max-width: 380px; display: flex; flex-direction: column; }
+.auth-card h2 {
+  font-family: var(--font-display); font-variation-settings: "opsz" 144, "wght" 560;
+  font-weight: 560; font-size: clamp(2rem, 8vw, 2.5rem); margin: 0 0 8px; color: var(--ink);
+}
+.auth-sub { font-size: .98rem; color: var(--ink-dim); line-height: 1.5; margin: 0 0 22px; }
+/* .field porte flex:1 1 120px (pensé pour les rangées horizontales) : dans une
+   colonne flex (auth/feuilles), ça étire les champs → on neutralise la pousse. */
+.auth-card .field, .sheet-card .field { flex: 0 0 auto; }
+.auth-card .field { margin-bottom: 14px; }
+/* Boutons pleine largeur dans une colonne flex : ne pas les laisser grandir. */
+.auth-card .btn-primary,
+.sheet-card > .btn-primary, .sheet-card > .btn-ghost { flex: 0 0 auto; }
+.auth-card .btn-primary { margin-top: 6px; }
+.auth-error {
+  font-size: .88rem; color: #EBA592;
+  background: rgba(217,117,94,.10); border: 1px solid rgba(217,117,94,.32);
+  border-radius: 10px; padding: 9px 12px; margin-bottom: 12px;
+}
+.auth-forgot { display: block; margin-top: 14px; font-size: .85rem; color: var(--ink-faint); text-align: center; text-decoration: none; }
+.auth-forgot:hover { color: var(--ink-dim); }
+.auth-toggle { margin-top: 18px; font-size: .9rem; color: var(--ink-dim); text-align: center; }
+.auth-toggle a { color: var(--amber); text-decoration: none; }
+.auth-toggle a:hover { text-decoration: underline; }
+
+/* Feuilles modales (ajouter un domicile / partager) */
+.sheet {
+  position: fixed; inset: 0; z-index: 95; background: rgba(8,11,15,.72);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+.sheet-card {
+  width: 100%; max-width: 520px;
+  background: linear-gradient(180deg, var(--surface) 0%, var(--surface-2) 100%);
+  border: 1px solid var(--line); border-radius: var(--radius) var(--radius) 0 0;
+  padding: var(--pad); max-height: 92vh; overflow-y: auto;
+  padding-bottom: calc(var(--pad) + env(safe-area-inset-bottom));
+}
+@media (min-width: 560px) {
+  .sheet { align-items: center; padding: 24px; }
+  .sheet-card { border-radius: var(--radius); }
+}
+.sheet-card h2 {
+  font-family: var(--font-display); font-variation-settings: "opsz" 144, "wght" 560;
+  font-weight: 560; font-size: 1.7rem; margin: 0 0 6px; color: var(--ink);
+}
+.sheet-card h3 {
+  font-family: var(--font-mono); font-size: .74rem; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-faint); margin: 22px 0 8px;
+}
+.sheet-card .field { margin-top: 14px; }
+.sheet-actions { display: flex; gap: 10px; margin-top: 22px; }
+.sheet-actions .btn-primary { flex: 2 1 auto; }
+.sheet-actions .btn-ghost { flex: 1 1 auto; }
+
+.df-row { display: flex; gap: 8px; }
+.df-row input { flex: 1 1 auto; }
+.df-row .btn-ghost { flex: 0 0 auto; }
+#df-mypos { margin-top: 12px; }
+.df-results { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.df-result {
+  text-align: left; background: var(--bg); border: 1px solid var(--line);
+  color: var(--ink); font-weight: 400; font-size: .92rem; padding: 10px 12px; border-radius: 10px;
+}
+.df-result:hover { border-color: var(--amber); }
+.df-coords { margin-top: 12px; font-size: .95rem; color: var(--ink); }
+.df-latlon { font-family: var(--font-mono); font-size: .8rem; color: var(--ink-faint); }
+.df-attrib { font-size: .72rem; color: var(--ink-faint); margin-top: 10px; }
+.df-error { color: #EBA592; font-size: .88rem; min-height: 1.1em; margin-top: 10px; }
+.df-hint { color: var(--ink-faint); font-size: .88rem; padding: 6px 2px; }
+
+.share-link-box { display: flex; gap: 8px; margin-top: 12px; }
+.share-link-box input { flex: 1 1 auto; font-size: .82rem; }
+.share-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.share-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 9px 0; border-bottom: 1px solid var(--line); font-size: .95rem; color: var(--ink);
+}
+.share-list li:last-child { border-bottom: none; }
+.share-list .who { color: var(--ink-faint); font-size: .82rem; }
+.link-btn { background: transparent; color: var(--amber); border: none; padding: 4px 6px; font-size: .82rem; font-weight: 500; }
+.link-btn:hover { text-decoration: underline; }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
