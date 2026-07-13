@@ -28,6 +28,7 @@ function corsHeaders(origin: string): Record<string, string> {
     'Access-Control-Allow-Origin': allow,
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'authorization, apikey, content-type',
+    'Vary': 'Origin',
     'Content-Type': 'application/json',
   };
 }
@@ -109,14 +110,19 @@ Deno.serve(async (req: Request) => {
       return new Response(JSON.stringify({ error: `Claude a répondu ${res.status}.` }), { status: 502, headers: cors });
     }
 
-    const data = await res.json();
+    const data = await res.json().catch(() => null);
+    const content = Array.isArray(data?.content) ? data.content : [];
     let reply = '';
     let action: any = null;
-    for (const block of data.content || []) {
+    for (const block of content) {
       if (block.type === 'text') reply += block.text;
-      if (block.type === 'tool_use' && block.name === 'proposer_action') action = block.input;
+      // Première proposition gagne (ne pas écraser silencieusement les précédentes).
+      if (block.type === 'tool_use' && block.name === 'proposer_action' && !action) action = block.input;
     }
-    return new Response(JSON.stringify({ reply: reply.trim(), action }), { headers: cors });
+    reply = reply.trim();
+    // Réponse « outil seul » : renvoyer le résumé de l'action comme texte.
+    if (!reply && action?.resume) reply = `Je te propose : ${action.resume}`;
+    return new Response(JSON.stringify({ reply, action }), { headers: cors });
   } catch (e) {
     console.error(e);
     return new Response(JSON.stringify({ error: 'Erreur réseau vers Claude.' }), { status: 502, headers: cors });

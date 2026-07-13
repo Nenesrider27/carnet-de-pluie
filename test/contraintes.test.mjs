@@ -64,5 +64,21 @@ console.log('\n=== COUCHE CONTRAINTES (ABSENCES) ===\n');
   ck('G sans contraintes → arroser (inchangé)', d1.etat === 'arroser' && d2.etat === 'arroser');
 }
 
+
+// H. FIX: la pluie APRÈS le retour ne supprime pas le nudge avant-depart
+{
+  const p = z(); p[11] = 20; // 20 mm le 14 (= APRÈS le retour du 13)
+  const d = decide({ weather: W(p), arrosages: [], reglages: REG, today: '2026-07-10', contraintes: ABS });
+  console.log(`H pluie après retour : etat=${d.etat}`);
+  ck('H pluie post-retour → avant-depart maintenu', d.etat === 'avant-depart', d.etat);
+}
+
+// I. Pluie PENDANT l'absence couvre toujours (non-régression du fix H)
+{
+  const p = z(); p[9] = 8; // 8 mm le 12, pendant l'absence
+  const d = decide({ weather: W(p), arrosages: [], reglages: REG, today: '2026-07-10', contraintes: ABS });
+  ck('I pluie pendant absence → pas avant-depart', d.etat !== 'avant-depart', d.etat);
+}
+
 console.log(`\n=== ${pass} PASS / ${fail} FAIL ===\n`);
 process.exit(fail === 0 ? 0 : 1);

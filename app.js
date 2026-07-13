@@ -1,21 +1,13 @@
 // app.js — couche présentation.
 // La LOGIQUE d'arrosage vit dans engine.js ; l'ACCÈS partagé dans store.js.
 // Ici : orchestration, cache localStorage (offline + affichage instantané), DOM.
-import { decide, DEFAULTS, CONSTANTS, addDays, projectWeek, computeObjectif } from './engine.js';
+import { decide, DEFAULTS, CONSTANTS, addDays, projectWeek, computeObjectif, round1 } from './engine.js';
 import { getArrosages, getReglages, upsertArrosage, patchReglages, purgeBefore, upsertSubscription,
-  getContraintes, addContrainte, deleteContrainte, purgeContraintesBefore } from './store.js';
+  getContraintes, addContrainte, purgeContraintesBefore } from './store.js';
+import { fetchWeatherData } from './weather.js';
 import { VAPID_PUBLIC, CHAT_URL, SUPA_KEY } from './config.js';
 
 // --- Config météo ------------------------------------------------------
-const LAT = 46.2777, LON = 6.2234;
-const API_URL =
-  `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
-  `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max,et0_fao_evapotranspiration` +
-  `&timezone=Europe%2FZurich&past_days=7&forecast_days=5&models=meteoswiss_icon_ch2`;
-// Fallback ET₀ : modèle global (si le modèle suisse ne renvoyait pas l'ET₀).
-const ET0_FALLBACK_URL =
-  `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
-  `&daily=et0_fao_evapotranspiration&timezone=Europe%2FZurich&past_days=7&forecast_days=5`;
 const WEATHER_TTL = 3 * 3600 * 1000; // 3 h : quota API (ne pas re-fetch à chaque ouverture)
 
 const LS = {
@@ -64,7 +56,6 @@ function isoToDate(iso) {
 const fmtLong = (iso) => new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' }).format(isoToDate(iso));
 const fmtShort = (iso) => new Intl.DateTimeFormat('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(isoToDate(iso));
 const fmtWeekday = (iso) => new Intl.DateTimeFormat('fr-FR', { weekday: 'long', timeZone: 'UTC' }).format(isoToDate(iso));
-const round1 = (n) => Math.round(n * 10) / 10;
 const cap = (s) => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 function ago(ts) {
   const m = Math.round((Date.now() - ts) / 60000);
@@ -90,37 +81,16 @@ function loadCache() {
   const cw = readLS(LS.weather, null); if (cw?.data) { weather = cw.data; weatherTs = cw.ts; }
 }
 
-const et0AllNull = (a) => !Array.isArray(a) || a.every((x) => x == null);
-
 async function loadWeather(force = false) {
   // Throttle : au plus un fetch réseau toutes les 3 h (quota Open-Meteo).
-  if (!force && weather && weatherTs && (Date.now() - weatherTs) < WEATHER_TTL) {
+  // Un cache d'une version antérieure (sans et0) ne compte pas : on re-fetch.
+  const cacheFresh = weather && Array.isArray(weather.et0) && weatherTs && (Date.now() - weatherTs) < WEATHER_TTL;
+  if (!force && cacheFresh) {
     weatherOffline = false;
     return;
   }
   try {
-    const res = await fetch(API_URL, { cache: 'no-store' });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    const data = await res.json();
-    if (!data?.daily?.time?.length) throw new Error('réponse météo vide');
-    let et0 = data.daily.et0_fao_evapotranspiration;
-    // Fallback ET₀ (modèle global) si absente/nulle sur le modèle suisse.
-    if (et0AllNull(et0)) {
-      try {
-        const r2 = await fetch(ET0_FALLBACK_URL, { cache: 'no-store' });
-        if (r2.ok) {
-          const d2 = await r2.json();
-          if (!et0AllNull(d2?.daily?.et0_fao_evapotranspiration)) et0 = d2.daily.et0_fao_evapotranspiration;
-        }
-      } catch { /* on gardera l'objectif de repli */ }
-    }
-    weather = {
-      time: data.daily.time,
-      precipitation_sum: data.daily.precipitation_sum,
-      precipitation_probability_max: data.daily.precipitation_probability_max,
-      temperature_2m_max: data.daily.temperature_2m_max,
-      et0,
-    };
+    weather = await fetchWeatherData(); // module partagé (même logique que le push)
     weatherTs = Date.now();
     weatherOffline = false;
     writeLS(LS.weather, { data: weather, ts: weatherTs });
@@ -166,15 +136,22 @@ function renderClimateBanner(m) {
   const el = $('climate-banner');
   if (!el) return;
   if (!m || !m.ok) { el.hidden = true; return; }
+  const manuel = m.objectif_source === 'manuel';
   if (m.objectif_source === 'fallback') {
     el.className = 'climate-banner cb-fallback';
     el.innerHTML = `⚠️ Objectif par défaut (${m.objectif} mm) — données ET₀ indisponibles.`;
     el.hidden = false;
   } else if (m.canicule) {
+    // En manuel, l'objectif n'a PAS été relevé par l'app — ne pas le prétendre.
+    // Et ne dire « relevé » que si l'objectif dépasse réellement le repère.
     el.className = 'climate-banner cb-hot';
-    el.innerHTML = `🔥 Canicule — objectif relevé à <b>${m.objectif} mm</b> (vs ${m.obj_ref} en temps normal) · sessions resserrées.`;
+    el.innerHTML = manuel
+      ? `🔥 Canicule — sessions resserrées · objectif manuel <b>${m.objectif} mm</b>.`
+      : (m.objectif > m.obj_ref
+        ? `🔥 Canicule — objectif relevé à <b>${m.objectif} mm</b> (vs ${m.obj_ref} en temps normal) · sessions resserrées.`
+        : `🔥 Canicule à venir — objectif <b>${m.objectif} mm</b> · sessions resserrées.`);
     el.hidden = false;
-  } else if (m.et0_mean3 != null && m.et0_mean3 <= 3) {
+  } else if (!manuel && m.et0_mean3 != null && m.et0_mean3 <= 3 && m.objectif < m.obj_ref) {
     el.className = 'climate-banner cb-cool';
     el.innerHTML = `🌥️ Temps frais — objectif abaissé à <b>${m.objectif} mm</b> (vs ${m.obj_ref} en temps normal).`;
     el.hidden = false;
@@ -203,6 +180,7 @@ function render() {
     if (decision.etat === 'erreur') {
       renderVerdictError('Météo incomplète', 'La date du jour est absente des données.', 'Impossible de situer aujourd\'hui dans les prévisions.');
       $('week-line').textContent = '';
+      renderClimateBanner(null);
     } else {
       renderVerdict(decision, reglages);
       renderWeekLine(decision);
@@ -705,6 +683,15 @@ function chatBubble(role, text) {
   return el;
 }
 
+// Coût maîtrisé : on n'envoie que les N derniers tours (le contexte du jour
+// est de toute façon reconstruit à chaque appel), en gardant un début 'user'.
+const CHAT_HISTORY_MAX = 16;
+function trimmedChatHistory() {
+  let h = chatHistory.slice(-CHAT_HISTORY_MAX);
+  while (h.length && h[0].role !== 'user') h = h.slice(1);
+  return h;
+}
+
 async function chatSend() {
   if (chatSending) return;
   const input = $('chat-input');
@@ -720,19 +707,26 @@ async function chatSend() {
     const res = await fetch(CHAT_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/json', apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY },
-      body: JSON.stringify({ messages: chatHistory, context: chatContext() }),
+      body: JSON.stringify({ messages: trimmedChatHistory(), context: chatContext() }),
     });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + res.status)); }
     const data = await res.json();
     thinking.remove();
-    const reply = data.reply || '(réponse vide)';
+    // Réponse « outil seul » (pas de texte) : afficher le résumé de l'action
+    // proposée plutôt qu'un faux « (réponse vide) » qui polluerait l'historique.
+    const reply = (data.reply && data.reply.trim())
+      || (data.action?.resume ? `Je te propose : ${data.action.resume}` : '(réponse vide)');
     chatHistory.push({ role: 'assistant', content: reply });
     chatBubble('bot', reply);
     if (data.action && data.action.type === 'absence') renderChatAction(data.action);
   } catch (e) {
+    // Échec : retirer le tour utilisateur de l'historique (rien n'a été traité)
+    // et remettre le texte dans le champ pour réessayer d'un tap.
+    if (chatHistory[chatHistory.length - 1]?.role === 'user') chatHistory.pop();
+    if (!input.value) input.value = text;
     thinking.remove();
     console.warn('[chat]', e.message);
-    chatBubble('bot', '⚠️ Assistant indisponible (' + e.message + '). Il n\'est peut-être pas encore déployé.');
+    chatBubble('bot', '⚠️ Assistant indisponible (' + e.message + '). Réessaie dans un instant.');
   } finally {
     chatSending = false; btn.disabled = false;
   }
@@ -747,16 +741,23 @@ function renderChatAction(action) {
   b.textContent = '✓ Appliquer : ' + (action.resume || `absence ${action.debut} → ${action.fin}`);
   b.addEventListener('click', async () => {
     b.disabled = true; b.textContent = 'Enregistrement…';
+    // Idempotence : si la même fenêtre existe déjà (double clic, réessai après
+    // un succès dont la réponse s'est perdue), ne pas insérer de doublon.
+    const dejaLa = () => contraintes.some((c) => c.type === 'absence' && c.debut === action.debut && c.fin === action.fin);
     try {
-      await addContrainte({ type: 'absence', debut: action.debut, fin: action.fin, note: action.resume, auteur: getPrenom() });
-      await syncData();
-      render();
-      wrap.className = 'chat-action done';
-      wrap.textContent = '✓ Enregistré — le dashboard est à jour.';
+      if (!dejaLa()) {
+        await addContrainte({ type: 'absence', debut: action.debut, fin: action.fin, note: action.resume, auteur: getPrenom() });
+      }
     } catch (e) {
       b.disabled = false; b.textContent = '✓ Appliquer';
       chatBubble('bot', '⚠️ Échec de l\'enregistrement : ' + e.message);
+      return;
     }
+    // L'insertion a réussi : un échec de la re-synchro ne doit PAS réafficher
+    // le bouton (sinon double insertion au clic suivant).
+    try { await syncData(); render(); } catch { /* re-synchro au prochain retour sur la page */ }
+    wrap.className = 'chat-action done';
+    wrap.textContent = '✓ Enregistré — le dashboard est à jour.';
   });
   wrap.appendChild(b);
   log.appendChild(wrap);
@@ -779,9 +780,13 @@ async function init() {
 if ('serviceWorker' in navigator) {
   // Quand un nouveau SW prend le contrôle (après un déploiement), recharger une
   // fois pour charger la version cohérente (HTML+JS+CSS du même déploiement).
+  // ⚠️ Pas de reload à la PREMIÈRE installation (clients.claim() déclenche
+  // controllerchange alors que rien n'était périmé) : on ne recharge que si
+  // un contrôleur existait déjà au chargement de la page.
+  const hadController = !!navigator.serviceWorker.controller;
   let swReloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (swReloaded) return;
+    if (!hadController || swReloaded) return;
     swReloaded = true;
     window.location.reload();
   });

@@ -83,9 +83,11 @@ export function computeObjectif({ weather, reglages, today }) {
 
   // ET₀ moyen des 3 prochains jours → seuil canicule (≥ 6 mm/j).
   const next3 = [];
-  for (let i = idx + 1; i <= idx + 3; i++) {
-    const v = et0[i];
-    if (i >= 0 && typeof v === 'number' && Number.isFinite(v)) next3.push(v);
+  if (idx !== -1) {
+    for (let i = idx + 1; i <= idx + 3; i++) {
+      const v = et0[i];
+      if (typeof v === 'number' && Number.isFinite(v)) next3.push(v);
+    }
   }
   const et0_mean3 = next3.length ? next3.reduce((a, b) => a + b, 0) / next3.length : null;
   const canicule = et0_mean3 != null && et0_mean3 >= 6;
@@ -289,7 +291,14 @@ function withContraintes(base, input) {
   if (leaving) {
     // Besoin réel pendant l'absence ? Déficit projeté au dernier jour d'absence
     // (sans arroser d'ici là) + peu de pluie sur la fenêtre.
-    const mFin = computeMetrics({ ...input, today: leaving.fin });
+    // ⚠️ La pluie prévue APRÈS le retour ne compte pas : elle n'aide pas le
+    // jardin pendant l'absence — on la neutralise avant de projeter le déficit.
+    const tFin = parseISO(leaving.fin);
+    const precipTrunc = (input.weather?.precipitation_sum || []).map((v, i) => {
+      const t = input.weather?.time?.[i];
+      return t && parseISO(t) > tFin ? 0 : v;
+    });
+    const mFin = computeMetrics({ ...input, weather: { ...input.weather, precipitation_sum: precipTrunc }, today: leaving.fin });
     const defFin = mFin.ok ? mFin.deficit : 0;
     const times = input.weather?.time || [];
     const precip = input.weather?.precipitation_sum || [];

@@ -4,21 +4,11 @@
 // l'heure locale Europe/Zurich est 6h (gère été/hiver sans magie). FORCE=1 bypass.
 import webpush from 'web-push';
 import { fileURLToPath } from 'node:url';
-import { decide, findTodayIdx } from '../engine.js';
-import { getArrosages, getReglages, getSubscriptions, deleteSubscription } from '../store.js';
+import { decide, findTodayIdx, round1 } from '../engine.js';
+import { getArrosages, getReglages, getContraintes, getSubscriptions, deleteSubscription } from '../store.js';
+import { fetchWeatherData } from '../weather.js';
 import { VAPID_PUBLIC } from '../config.js';
 
-const LAT = 46.2777, LON = 6.2234;
-const API_URL =
-  `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
-  `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max,et0_fao_evapotranspiration` +
-  `&timezone=Europe%2FZurich&past_days=7&forecast_days=5&models=meteoswiss_icon_ch2`;
-const ET0_FALLBACK_URL =
-  `https://api.open-meteo.com/v1/forecast?latitude=${LAT}&longitude=${LON}` +
-  `&daily=et0_fao_evapotranspiration&timezone=Europe%2FZurich&past_days=7&forecast_days=5`;
-const et0AllNull = (a) => !Array.isArray(a) || a.every((x) => x == null);
-
-const round1 = (n) => Math.round(n * 10) / 10;
 
 function zurichHour(d = new Date()) {
   return Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Zurich', hour: '2-digit', hourCycle: 'h23' }).format(d));
@@ -28,10 +18,11 @@ function zurichToday(d = new Date()) {
 }
 
 // --- Décision → notification (PURE, testable) --------------------------
-// Renvoie { push, title, body, etat }. Ne notifie QUE pour ARROSER, et pour
-// PLUIE seulement si un arrosage aurait été dû sans la pluie (sinon silence).
-export function planNotification({ weather, arrosages, reglages, today }) {
-  const d = decide({ weather, arrosages, reglages, today });
+// Renvoie { push, title, body, etat }. Notifie pour ARROSER et AVANT-DEPART,
+// et pour PLUIE seulement si un arrosage aurait été dû sans la pluie.
+// ABSENT → silence (on ne pousse pas « arrose » à quelqu'un qui n'est pas là).
+export function planNotification({ weather, arrosages, reglages, today, contraintes }) {
+  const d = decide({ weather, arrosages, reglages, today, contraintes });
   const m = d.metrics;
 
   if (d.etat === 'arroser') {
@@ -42,13 +33,21 @@ export function planNotification({ weather, arrosages, reglages, today }) {
     };
   }
 
+  if (d.etat === 'avant-depart') {
+    return {
+      push: true, etat: 'avant-depart',
+      title: `🧳 Arrose ~${d.minutes} min avant de partir`,
+      body: `Personne au jardin pendant ton absence et pas de pluie prévue (déficit ~${round1(d.deficitFin)} mm au retour).`,
+    };
+  }
+
   if (d.etat === 'pluie') {
     // La pluie couvre-t-elle un besoin réel ? On rejoue sans la pluie des 48 h.
     const idx = findTodayIdx(weather.time, today);
     const precip = [...weather.precipitation_sum];
     if (idx >= 0) { precip[idx + 1] = 0; precip[idx + 2] = 0; }
-    const shadow = decide({ weather: { ...weather, precipitation_sum: precip }, arrosages, reglages, today });
-    if (shadow.etat === 'arroser') {
+    const shadow = decide({ weather: { ...weather, precipitation_sum: precip }, arrosages, reglages, today, contraintes });
+    if (shadow.etat === 'arroser' || shadow.etat === 'avant-depart') {
       return {
         push: true, etat: 'pluie',
         title: '🌧️ La pluie s\'en charge',
@@ -57,30 +56,10 @@ export function planNotification({ weather, arrosages, reglages, today }) {
     }
   }
 
-  // rien / attends / presque / fait / pluie-sans-besoin → aucun push (pas de spam)
+  // rien / attends / presque / fait / absent / pluie-sans-besoin → aucun push
   return { push: false, etat: d.etat };
 }
 
-async function fetchWeather() {
-  const res = await fetch(API_URL, { cache: 'no-store' });
-  if (!res.ok) throw new Error('météo HTTP ' + res.status);
-  const data = await res.json();
-  if (!data?.daily?.time?.length) throw new Error('météo vide');
-  let et0 = data.daily.et0_fao_evapotranspiration;
-  if (et0AllNull(et0)) {
-    try {
-      const r2 = await fetch(ET0_FALLBACK_URL, { cache: 'no-store' });
-      if (r2.ok) { const d2 = await r2.json(); if (!et0AllNull(d2?.daily?.et0_fao_evapotranspiration)) et0 = d2.daily.et0_fao_evapotranspiration; }
-    } catch { /* repli objectif fixe */ }
-  }
-  return {
-    time: data.daily.time,
-    precipitation_sum: data.daily.precipitation_sum,
-    precipitation_probability_max: data.daily.precipitation_probability_max,
-    temperature_2m_max: data.daily.temperature_2m_max,
-    et0,
-  };
-}
 
 async function main() {
   const force = process.env.FORCE === '1';
@@ -96,12 +75,19 @@ async function main() {
   webpush.setVapidDetails('mailto:ernestchapl27@gmail.com', VAPID_PUBLIC, priv);
 
   const today = zurichToday();
-  const [weather, arrosages, reglages] = await Promise.all([
-    fetchWeather(), getArrosages(), getReglages(),
+  const [weather, arrosages, reglages, contraintes] = await Promise.all([
+    fetchWeatherData(), getArrosages(), getReglages(), getContraintes(),
   ]);
-  const reg = reglages ? { objectif_mm: Number(reglages.objectif_mm), debit_mm_h: Number(reglages.debit_mm_h) } : undefined;
+  // ⚠️ Garder TOUS les réglages (kc, objectif_manuel inclus) : le push doit
+  // calculer exactement le même objectif que la page (une seule logique).
+  const reg = reglages ? {
+    objectif_mm: Number(reglages.objectif_mm),
+    debit_mm_h: Number(reglages.debit_mm_h),
+    kc: reglages.kc != null ? Number(reglages.kc) : undefined,
+    objectif_manuel: reglages.objectif_manuel === true,
+  } : undefined;
 
-  const plan = planNotification({ weather, arrosages, reglages: reg, today });
+  const plan = planNotification({ weather, arrosages, reglages: reg, today, contraintes });
   console.log(`État du jour : ${plan.etat} — push : ${plan.push ? 'OUI' : 'non'}`);
   if (!plan.push) return;
 

@@ -49,5 +49,16 @@ console.log('\n=== LOGIQUE DE NOTIFICATION MATINALE ===\n');
   ck('ATTENDS → pas de push', !n.push && n.etat === 'attends');
 }
 
+
+// FIX: AVANT-DEPART → push ; ABSENT → silence
+{
+  const ABS = [{ type: 'absence', debut: '2026-07-10', fin: '2026-07-12' }];
+  const n1 = planNotification({ weather: W(z()), arrosages: [], reglages: REG, today: '2026-07-09', contraintes: ABS });
+  ck('AVANT-DEPART (veille) → push', n1.push && n1.etat === 'avant-depart', JSON.stringify({etat:n1.etat,push:n1.push}));
+  ck('AVANT-DEPART titre « avant de partir »', /avant de partir/.test(n1.title || ''), n1.title);
+  const n2 = planNotification({ weather: W(z()), arrosages: [], reglages: REG, today: '2026-07-11', contraintes: ABS });
+  ck('ABSENT (pendant) → PAS de push', !n2.push && n2.etat === 'absent', JSON.stringify({etat:n2.etat,push:n2.push}));
+}
+
 console.log(`\n=== ${pass} PASS / ${fail} FAIL ===\n`);
 process.exit(fail === 0 ? 0 : 1);

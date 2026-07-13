@@ -15,7 +15,7 @@
   /* Encres : blanc chaud « papier », dégradés de gris froid */
   --ink:       #ECE6DA;
   --ink-dim:   #9DA9B3;
-  --ink-faint: #63707B;
+  --ink-faint: #7B8894;
 
   /* Accents sémantiques (cf. plan) */
   --amber:     #EDA53E; /* il faut agir / arroser */
@@ -86,7 +86,7 @@ body {
 header { margin-bottom: 20px; }
 .wordmark {
   font-family: var(--font-mono);
-  font-size: .72rem;
+  font-size: .78rem;
   font-weight: 500;
   letter-spacing: .28em;
   text-transform: uppercase;
@@ -244,7 +244,7 @@ header { margin-bottom: 20px; }
 }
 .wk-day {
   font-family: var(--font-mono);
-  font-size: .55rem;
+  font-size: .62rem;
   letter-spacing: .02em;
   text-transform: uppercase;
   color: var(--ink-faint);
@@ -253,12 +253,12 @@ header { margin-bottom: 20px; }
 .wk-icon { font-size: 1.05rem; line-height: 1.1; }
 .wk-min {
   font-family: var(--font-mono);
-  font-size: .55rem;
+  font-size: .6rem;
   color: var(--ink-dim);
   white-space: nowrap;
 }
 .wk-cell.inconnu { opacity: .38; }
-.wk-et0 { font-family: var(--font-mono); font-size: .5rem; color: var(--ink-faint); }
+.wk-et0 { font-family: var(--font-mono); font-size: .58rem; color: var(--ink-dim); }
 .wk-cell.today .wk-et0 { color: var(--amber); }
 
 /* ---- Bandeau climat (canicule / frais / repli) ---- */
@@ -366,7 +366,7 @@ details[open] > summary::after { content: "–"; }
 }
 .field label {
   font-family: var(--font-mono);
-  font-size: .68rem;
+  font-size: .72rem;
   letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--ink-faint);
@@ -379,6 +379,7 @@ input[type="date"], input[type="number"], input[type="text"] {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 11px 12px;
+  min-height: 44px;
   width: 100%;
   -webkit-appearance: none;
   appearance: none;
@@ -514,7 +515,7 @@ button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 .gauge .bar.dry .stem { background: var(--line); }
 .gauge .lbl {
   font-family: var(--font-mono);
-  font-size: .58rem;
+  font-size: .64rem;
   color: var(--ink-faint);
   text-align: center;
   line-height: 1.15;
@@ -524,13 +525,13 @@ button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
   position: absolute;
   top: -18px;
   font-family: var(--font-mono);
-  font-size: .58rem;
+  font-size: .64rem;
   color: var(--ink-dim);
   white-space: nowrap;
 }
 .gauge .prob {
   font-family: var(--font-mono);
-  font-size: .54rem;
+  font-size: .6rem;
   color: var(--blue);
   opacity: .85;
 }
@@ -539,7 +540,7 @@ button:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
   flex-wrap: wrap;
   gap: 6px 16px;
   font-family: var(--font-mono);
-  font-size: .66rem;
+  font-size: .7rem;
   color: var(--ink-faint);
   margin-top: 10px;
 }
@@ -562,14 +563,14 @@ footer {
   padding-top: 16px;
   border-top: 1px solid var(--line);
   font-family: var(--font-mono);
-  font-size: .68rem;
+  font-size: .73rem;
   line-height: 1.6;
   color: var(--ink-faint);
 }
 .synced {
   margin-top: 10px;
   font-family: var(--font-mono);
-  font-size: .7rem;
+  font-size: .75rem;
   color: var(--ink-faint);
   text-align: center;
 }
@@ -619,7 +620,7 @@ footer {
 }
 .chrono-label {
   font-family: var(--font-mono);
-  font-size: .74rem;
+  font-size: .78rem;
   letter-spacing: .22em;
   text-transform: uppercase;
   color: var(--ink-faint);
