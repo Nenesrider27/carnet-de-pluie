@@ -11,10 +11,20 @@
 
 const DEFAULT_LOC = { lat: 46.2777, lon: 6.2234, tz: 'Europe/Zurich' };
 
+// Choix du modèle météo selon les coordonnées. Les modèles NATIONAUX haute
+// résolution assimilent le radar local et sont bien plus fiables que `best_match`
+// (qui peut piocher un modèle global grossier — il a un jour « vu » 20 mm de
+// pluie à Anières quand MétéoSuisse, avec le radar suisse, disait 0.1 mm réel).
+export function pickModel(lat, lon) {
+  if (lat >= 45.7 && lat <= 47.9 && lon >= 5.8 && lon <= 10.6) return 'meteoswiss_icon_ch2';   // Suisse (2 km)
+  if (lat >= 41.0 && lat <= 51.5 && lon >= -5.5 && lon <= 9.8) return 'meteofrance_seamless';  // France métro (AROME/ARPEGE)
+  return 'best_match';                                                                          // ailleurs : au mieux
+}
+
 function forecastUrl(lat, lon, tz) {
   return `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max,et0_fao_evapotranspiration` +
-    `&timezone=${encodeURIComponent(tz)}&past_days=7&forecast_days=5`;
+    `&timezone=${encodeURIComponent(tz)}&past_days=7&forecast_days=5&models=${pickModel(lat, lon)}`;
 }
 
 // Repli ET₀ : même requête, ET₀ seul (si le modèle choisi a des lacunes sur l'ET₀).

@@ -78,7 +78,7 @@ const getPrenom = () => dom.myPrenom();
 function loadCache() {
   const ca = readLS(dom.nsKey('arrosages'), null); arrosages = Array.isArray(ca) ? ca : [];
   const cc = readLS(dom.nsKey('contraintes'), null); contraintes = Array.isArray(cc) ? cc : [];
-  const cw = readLS(dom.nsKey('weather'), null); if (cw?.data) { weather = cw.data; weatherTs = cw.ts; } else { weather = null; weatherTs = null; }
+  const cw = readLS(dom.nsKey('weather2'), null); if (cw?.data) { weather = cw.data; weatherTs = cw.ts; } else { weather = null; weatherTs = null; }
   reglages = dom.currentReglages() || { ...DEFAULTS };
 }
 
@@ -89,7 +89,7 @@ async function loadWeather(force = false) {
     weather = await fetchWeatherData(dom.currentLoc());
     weatherTs = Date.now();
     weatherOffline = false;
-    writeLS(dom.nsKey('weather'), { data: weather, ts: weatherTs });
+    writeLS(dom.nsKey('weather2'), { data: weather, ts: weatherTs });
   } catch (e) {
     weatherOffline = true;
     console.warn('[météo] fetch échoué :', e.message);

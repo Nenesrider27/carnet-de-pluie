@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "node test/engine.test.mjs && node test/objectif.test.mjs && node test/contraintes.test.mjs && node test/notify.test.mjs && node test/geocode.test.mjs && node test/supabase.test.mjs",
+    "test": "node test/engine.test.mjs && node test/objectif.test.mjs && node test/contraintes.test.mjs && node test/notify.test.mjs && node test/geocode.test.mjs && node test/weather.test.mjs && node test/supabase.test.mjs",
     "serve": "python3 -m http.server 8080",
     "bundle:auth": "esbuild node_modules/@supabase/auth-js/dist/module/index.js --bundle --format=esm --platform=browser --target=es2020 --minify --legal-comments=none --outfile=vendor/auth-js.js"
   },
