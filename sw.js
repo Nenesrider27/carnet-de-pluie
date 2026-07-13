@@ -1,6 +1,6 @@
 // sw.js — service worker : cache hors-ligne de l'app + (étape 4) réception des push.
 // Bump VERSION à chaque déploiement pour invalider l'ancien cache.
-const VERSION = 'cp-v6';
+const VERSION = 'cp-v7';
 
 // Coquille de l'app (même origine) préchargée à l'installation.
 const CORE = [
@@ -10,7 +10,7 @@ const CORE = [
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open(VERSION).then((c) => c.addAll(CORE)).then(() => self.skipWaiting())
+    caches.open(VERSION).then((c) => c.addAll(CORE.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())
   );
 });
 
