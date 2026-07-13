@@ -1,32 +1,33 @@
 // app.js — couche présentation.
-// La LOGIQUE d'arrosage vit dans engine.js ; l'ACCÈS partagé dans store.js.
-// Ici : orchestration, cache localStorage (offline + affichage instantané), DOM.
+// La LOGIQUE d'arrosage vit dans engine.js ; l'ACCÈS (cloisonné par domicile) dans
+// store.js ; la SESSION dans auth.js ; l'ÉTAT du domicile courant dans domicile.js.
+// Ici : orchestration, gate d'authentification, sélecteur de domicile, cache
+// localStorage (offline + affichage instantané), DOM.
 import { decide, DEFAULTS, CONSTANTS, addDays, projectWeek, computeObjectif, round1 } from './engine.js';
-import { getArrosages, getReglages, upsertArrosage, patchReglages, purgeBefore, upsertSubscription,
-  getContraintes, addContrainte, purgeContraintesBefore } from './store.js';
+import { configureStore, getMyDomiciles, createDomicile, patchDomicile, getMembers, setMyPrenom,
+  createInvitation, listInvitations, revokeInvitation, acceptInvitation, removeMember,
+  getArrosages, upsertArrosage, purgeBefore, getContraintes, addContrainte, purgeContraintesBefore,
+  upsertSubscription } from './store.js';
 import { fetchWeatherData } from './weather.js';
 import { VAPID_PUBLIC, CHAT_URL, SUPA_KEY } from './config.js';
+import * as auth from './auth.js';
+import * as dom from './domicile.js';
+import { geocodeAddress, geocodeAddressPrecise, currentPosition, reverseGeocode } from './geocode.js';
+
+// store.js utilise le JWT de l'utilisateur connecté (RLS) ; apikey = clé publishable.
+configureStore(async () => {
+  const t = await auth.accessToken();
+  return t ? { apikey: SUPA_KEY, Authorization: 'Bearer ' + t } : { apikey: SUPA_KEY };
+});
 
 // --- Config météo ------------------------------------------------------
 const WEATHER_TTL = 3 * 3600 * 1000; // 3 h : quota API (ne pas re-fetch à chaque ouverture)
-
-const LS = {
-  weather: 'cp.weather',      // { data, ts }
-  arrosages: 'cp.arrosages',  // [{ jour, minutes, auteur, updated_at }]  (cache de Supabase)
-  reglages: 'cp.reglages',    // { objectif_mm, debit_mm_h }             (cache de Supabase)
-  contraintes: 'cp.contraintes', // [{ type, debut, fin, ... }]          (cache de Supabase)
-  prenom: 'cp.prenom',        // string (identité LOCALE de l'appareil)
-  onboarded: 'cp.onboarded',  // bool (onboarding vu)
-};
 
 // --- Utilitaires -------------------------------------------------------
 const $ = (id) => document.getElementById(id);
 const readLS = (k, fb) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : fb; } catch { return fb; } };
 const writeLS = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
-// iOS peut évincer le stockage local d'une PWA entre deux lancements → on demande
-// un stockage PERSISTANT (exempt d'éviction automatique). Résout le « ça oublie
-// mon prénom à chaque fois ».
 let storagePersistent = null;
 async function ensurePersistentStorage() {
   try {
@@ -39,15 +40,15 @@ async function ensurePersistentStorage() {
 }
 function updateStorageStatus() {
   const el = $('storage-status'); if (!el) return;
-  if (storagePersistent === true) el.textContent = '💾 Stockage persistant activé — ton prénom est mémorisé.';
-  else if (storagePersistent === false) el.textContent = '⚠️ iOS n\'a pas accordé de stockage persistant : ton prénom peut être oublié. Dis-le-moi si ça se reproduit.';
+  if (storagePersistent === true) el.textContent = '💾 Stockage persistant activé.';
+  else if (storagePersistent === false) el.textContent = '⚠️ iOS n\'a pas accordé de stockage persistant.';
   else el.textContent = '';
 }
 
-function todayZurich() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Zurich', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
+// Date « aujourd'hui » dans le fuseau du domicile courant (multi-fuseaux propre).
+function todayLocal() {
+  const tz = dom.currentLoc().tz || 'Europe/Zurich';
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
 function isoToDate(iso) {
   const [y, m, d] = iso.split('-').map(Number);
@@ -62,64 +63,54 @@ function ago(ts) {
   return m < 1 ? 'à l\'instant' : m < 60 ? `il y a ${m} min` : `il y a ${Math.round(m / 60)} h`;
 }
 
-// --- État applicatif ---------------------------------------------------
+// --- État applicatif (du DOMICILE COURANT) ----------------------------
 let weather = null, weatherTs = null, weatherOffline = false;
-let arrosages = [];               // source : Supabase (cache localStorage)
-let reglages = { ...DEFAULTS };   // source : Supabase (cache localStorage)
-let contraintes = [];             // absences (source Supabase, cache localStorage)
+let arrosages = [];
+let reglages = { ...DEFAULTS };
+let contraintes = [];
 let dataTs = null, dataOffline = false;
-let lastFailedSave = null;        // { date, min } pour le bouton « Réessayer »
-let currentArroserMinutes = 0;    // minutes recommandées (chrono / « C'est fait »)
+let lastFailedSave = null;
+let currentArroserMinutes = 0;
 
-const getPrenom = () => readLS(LS.prenom, '') || '';
+const getPrenom = () => dom.myPrenom();
 
-// --- Chargement des données -------------------------------------------
+// --- Chargement des données (namespacées par domicile) ----------------
 function loadCache() {
-  const ca = readLS(LS.arrosages, null); if (Array.isArray(ca)) arrosages = ca;
-  const cr = readLS(LS.reglages, null); if (cr) reglages = { ...DEFAULTS, ...cr };
-  const cc = readLS(LS.contraintes, null); if (Array.isArray(cc)) contraintes = cc;
-  const cw = readLS(LS.weather, null); if (cw?.data) { weather = cw.data; weatherTs = cw.ts; }
+  const ca = readLS(dom.nsKey('arrosages'), null); arrosages = Array.isArray(ca) ? ca : [];
+  const cc = readLS(dom.nsKey('contraintes'), null); contraintes = Array.isArray(cc) ? cc : [];
+  const cw = readLS(dom.nsKey('weather'), null); if (cw?.data) { weather = cw.data; weatherTs = cw.ts; } else { weather = null; weatherTs = null; }
+  reglages = dom.currentReglages() || { ...DEFAULTS };
 }
 
 async function loadWeather(force = false) {
-  // Throttle : au plus un fetch réseau toutes les 3 h (quota Open-Meteo).
-  // Un cache d'une version antérieure (sans et0) ne compte pas : on re-fetch.
   const cacheFresh = weather && Array.isArray(weather.et0) && weatherTs && (Date.now() - weatherTs) < WEATHER_TTL;
-  if (!force && cacheFresh) {
-    weatherOffline = false;
-    return;
-  }
+  if (!force && cacheFresh) { weatherOffline = false; return; }
   try {
-    weather = await fetchWeatherData(); // module partagé (même logique que le push)
+    weather = await fetchWeatherData(dom.currentLoc());
     weatherTs = Date.now();
     weatherOffline = false;
-    writeLS(LS.weather, { data: weather, ts: weatherTs });
+    writeLS(dom.nsKey('weather'), { data: weather, ts: weatherTs });
   } catch (e) {
     weatherOffline = true;
     console.warn('[météo] fetch échoué :', e.message);
   }
 }
 
-// Supabase = source de vérité. Purge 14 j (best-effort), puis lit réglages + arrosages.
+// Supabase = source de vérité. Purge 14 j (best-effort), puis lit arrosages + contraintes.
+// Les réglages viennent du domicile lui-même (dom.currentReglages()).
 async function syncData() {
-  const today = todayZurich();
+  const id = dom.currentId();
+  if (!id) return;
+  const today = todayLocal();
   try {
-    purgeBefore(addDays(today, -14)).catch((e) => console.warn('[purge]', e.message));
-    purgeContraintesBefore(today).catch((e) => console.warn('[purge-contr]', e.message));
-    const [reg, arr, contr] = await Promise.all([getReglages(), getArrosages(), getContraintes()]);
-    if (reg) {
-      reglages = {
-        objectif_mm: Number(reg.objectif_mm),
-        debit_mm_h: Number(reg.debit_mm_h),
-        kc: reg.kc != null ? Number(reg.kc) : DEFAULTS.kc,
-        objectif_manuel: reg.objectif_manuel === true,
-      };
-      writeLS(LS.reglages, reglages);
-    }
+    purgeBefore(id, addDays(today, -14)).catch((e) => console.warn('[purge]', e.message));
+    purgeContraintesBefore(id, today).catch((e) => console.warn('[purge-contr]', e.message));
+    const [arr, contr] = await Promise.all([getArrosages(id), getContraintes(id)]);
     arrosages = Array.isArray(arr) ? arr : [];
-    writeLS(LS.arrosages, arrosages);
+    writeLS(dom.nsKey('arrosages'), arrosages);
     contraintes = Array.isArray(contr) ? contr : [];
-    writeLS(LS.contraintes, contraintes);
+    writeLS(dom.nsKey('contraintes'), contraintes);
+    reglages = dom.currentReglages() || { ...DEFAULTS };
     dataTs = Date.now();
     dataOffline = false;
   } catch (e) {
@@ -131,7 +122,6 @@ async function syncData() {
 // --- Rendu -------------------------------------------------------------
 const ICONS = { arroser: '💧', presque: '🌱', attends: '⏳', fait: '✅', rien: '✅', pluie: '🌧️', erreur: '⚠️', 'avant-depart': '🧳', absent: '🚪' };
 
-// Bandeau contextuel : uniquement quand le climat sort de l'ordinaire.
 function renderClimateBanner(m) {
   const el = $('climate-banner');
   if (!el) return;
@@ -142,8 +132,6 @@ function renderClimateBanner(m) {
     el.innerHTML = `⚠️ Objectif par défaut (${m.objectif} mm) — données ET₀ indisponibles.`;
     el.hidden = false;
   } else if (m.canicule) {
-    // En manuel, l'objectif n'a PAS été relevé par l'app — ne pas le prétendre.
-    // Et ne dire « relevé » que si l'objectif dépasse réellement le repère.
     el.className = 'climate-banner cb-hot';
     el.innerHTML = manuel
       ? `🔥 Canicule — sessions resserrées · objectif manuel <b>${m.objectif} mm</b>.`
@@ -161,7 +149,7 @@ function renderClimateBanner(m) {
 }
 
 function render() {
-  const today = todayZurich();
+  const today = todayLocal();
   $('dateToday').textContent = cap(fmtLong(today));
 
   const nOff = $('notice-offline'); nOff.classList.remove('show');
@@ -277,7 +265,7 @@ const WK_ICONS = { arroser: '💧', pluie: '🌧️', attends: '⏳', fait: '✅
 function renderWeek() {
   const el = $('week');
   if (!weather) { el.hidden = true; return; }
-  const today = todayZurich();
+  const today = todayLocal();
   const wk = projectWeek({ weather, arrosages, reglages, today, contraintes });
   el.hidden = false;
   el.innerHTML = wk.map((d, i) => {
@@ -308,7 +296,7 @@ function renderLog() {
 function renderGauge() {
   const g = $('gauge');
   if (!weather) { g.innerHTML = ''; return; }
-  const today = todayZurich();
+  const today = todayLocal();
   const times = weather.time;
   const precip = weather.precipitation_sum || [];
   const probs = weather.precipitation_probability_max || [];
@@ -343,11 +331,10 @@ function renderStatus() {
   $('synced').textContent = parts.length ? parts.join('  ·  ') : '';
 }
 
-// Ligne « [Prénom] a arrosé N min » quand l'AUTRE a arrosé récemment (synchro visible light).
 function renderSyncNote() {
   const el = $('sync-note'); if (!el) return;
   const me = getPrenom();
-  const today = todayZurich();
+  const today = todayLocal();
   const recent = [...arrosages]
     .filter((r) => r.auteur && r.auteur !== me && (r.jour === today || r.jour === addDays(today, -1)))
     .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0];
@@ -362,24 +349,22 @@ function escapeHtml(s) {
 }
 
 // --- Enregistrer un arrosage (Supabase, échec honnête) ----------------
-// Cœur partagé : lit l'existant du jour, additionne, upsert. Lève en cas d'échec.
 async function recordArrosage(date, min) {
   const existing = arrosages.find((r) => r.jour === date);
   const total = (existing?.minutes || 0) + min;
-  const row = await upsertArrosage({ jour: date, minutes: total, auteur: getPrenom() });
+  const row = await upsertArrosage({ domicileId: dom.currentId(), jour: date, minutes: total, auteur: getPrenom() });
   arrosages = arrosages.filter((r) => r.jour !== date).concat(row);
-  writeLS(LS.arrosages, arrosages);
+  writeLS(dom.nsKey('arrosages'), arrosages);
   dataTs = Date.now(); dataOffline = false;
   return { total, existed: !!existing };
 }
 
-// Formulaire manuel (date passée / durée custom).
 async function saveArrosage() {
   const fb = $('save-feedback');
   fb.className = 'save-feedback';
   const date = $('in-date').value;
   const min = parseInt($('in-min').value, 10);
-  const today = todayZurich();
+  const today = todayLocal();
 
   if (!date) return failSave('Choisis un jour.');
   if (date > today) return failSave('Pas de date future.');
@@ -411,9 +396,8 @@ async function saveArrosage() {
   }
 }
 
-// Enregistrer un arrosage d'AUJOURD'HUI (bouton « C'est fait » ou fin de chrono).
 async function recordToday(min) {
-  const today = todayZurich();
+  const today = todayLocal();
   try {
     const { total } = await recordArrosage(today, min);
     toast(total !== min ? `✓ ${min} min ajoutées (${total} min aujourd'hui)` : `✓ ${min} min enregistrées`);
@@ -440,12 +424,11 @@ function toast(msg) {
 }
 
 // --- Chrono d'arrosage -------------------------------------------------
-let chrono = null;   // { targetSec, startMs, interval, minutes, finished }
+let chrono = null;
 let audioCtx = null;
 
 function startChrono(minutes) {
   if (!minutes || minutes <= 0) return;
-  // Débloquer l'audio sur le geste utilisateur (contrainte iOS).
   try {
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') audioCtx.resume();
@@ -485,7 +468,7 @@ async function finishChrono() {
 
 async function stopChrono() {
   if (!chrono) return;
-  if (chrono.finished) { closeChrono(); return; } // bouton « Fermer »
+  if (chrono.finished) { closeChrono(); return; }
   clearInterval(chrono.interval);
   const min = Math.max(1, Math.round((Date.now() - chrono.startMs) / 60000));
   closeChrono();
@@ -526,8 +509,6 @@ function failSave(msg) {
   fb.textContent = msg;
 }
 
-// Réessai idempotent : on recalcule le total depuis l'état courant (l'upsert
-// merge-duplicates remplace, donc rejouer ne double jamais).
 function retrySave() {
   if (!lastFailedSave) return;
   $('in-date').value = lastFailedSave.date;
@@ -535,7 +516,7 @@ function retrySave() {
   saveArrosage();
 }
 
-// --- Réglages ----------------------------------------------------------
+// --- Réglages (du domicile courant) -----------------------------------
 async function saveReglages() {
   const fb = $('reglages-feedback');
   const debit = parseFloat($('in-debit').value);
@@ -548,22 +529,19 @@ async function saveReglages() {
   if (!Number.isFinite(kc) || kc <= 0) { fb.className = 'save-feedback err'; fb.textContent = 'Kc invalide.'; return; }
   if (manuel && (!Number.isFinite(obj) || obj <= 0)) { fb.className = 'save-feedback err'; fb.textContent = 'Objectif manuel invalide.'; return; }
 
-  writeLS(LS.prenom, prenom); // identité locale : toujours sauvée localement
-
   const btn = $('btn-reglages');
   btn.disabled = true; const label = btn.textContent; btn.textContent = 'Envoi…';
   fb.className = 'save-feedback'; fb.textContent = '';
   try {
+    // Prénom : membership du domicile courant.
+    if (prenom && prenom !== dom.myPrenom()) {
+      await setMyPrenom(dom.currentId(), dom.getUserId(), prenom);
+    }
     const patch = { debit_mm_h: debit, kc, objectif_manuel: manuel };
     if (manuel && Number.isFinite(obj)) patch.objectif_mm = obj;
-    const r = await patchReglages(patch);
-    reglages = {
-      objectif_mm: Number(r.objectif_mm),
-      debit_mm_h: Number(r.debit_mm_h),
-      kc: r.kc != null ? Number(r.kc) : DEFAULTS.kc,
-      objectif_manuel: r.objectif_manuel === true,
-    };
-    writeLS(LS.reglages, reglages);
+    await patchDomicile(dom.currentId(), patch);
+    await refreshDomiciles();          // recharge le domicile (réglages + prénom à jour)
+    reglages = dom.currentReglages() || { ...DEFAULTS };
     fb.className = 'save-feedback ok';
     fb.textContent = '✓ Réglages enregistrés.';
     fillSettings();
@@ -571,13 +549,12 @@ async function saveReglages() {
   } catch (e) {
     console.warn('[reglages] échec :', e.message);
     fb.className = 'save-feedback err';
-    fb.textContent = 'Échec de synchro (hors ligne ? ou colonnes Kc/manuel pas encore ajoutées à la table réglages).';
+    fb.textContent = 'Échec de synchro (hors ligne ?).';
   } finally {
     btn.disabled = false; btn.textContent = label;
   }
 }
 
-// --- Formulaire / init -------------------------------------------------
 function fillSettings() {
   const set = (id, v) => { const el = $(id); if (el && document.activeElement !== el) el.value = v; };
   set('in-obj', reglages.objectif_mm);
@@ -587,10 +564,9 @@ function fillSettings() {
   const manuel = !!reglages.objectif_manuel;
   const chk = $('in-manuel'); if (chk && document.activeElement !== chk) chk.checked = manuel;
   const mf = $('manuel-field'); if (mf) mf.hidden = !manuel;
-  // Ligne « objectif calculé »
   const oc = $('obj-computed');
   if (oc) {
-    const o = weather ? computeObjectif({ weather, reglages, today: todayZurich() }) : null;
+    const o = weather ? computeObjectif({ weather, reglages, today: todayLocal() }) : null;
     if (!o) oc.textContent = 'Objectif de la semaine : —';
     else if (o.source === 'manuel') oc.innerHTML = `Objectif manuel : <b>${o.objectif} mm</b>/semaine.`;
     else if (o.source === 'fallback') oc.innerHTML = `Objectif : <b>${o.objectif} mm</b> — par défaut (ET₀ indisponible).`;
@@ -599,7 +575,7 @@ function fillSettings() {
 }
 
 function initForm() {
-  const today = todayZurich();
+  const today = todayLocal();
   const di = $('in-date'); di.value = today; di.max = today;
   fillSettings();
   $('btn-save').addEventListener('click', saveArrosage);
@@ -608,7 +584,6 @@ function initForm() {
   $('in-manuel').addEventListener('change', (e) => { const mf = $('manuel-field'); if (mf) mf.hidden = !e.target.checked; });
   $('chat-send').addEventListener('click', chatSend);
   $('chat-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') chatSend(); });
-  // Chrono / « C'est fait »
   $('btn-chrono').addEventListener('click', () => startChrono(currentArroserMinutes));
   $('btn-done').addEventListener('click', async () => {
     const b = $('btn-done'); b.disabled = true;
@@ -619,34 +594,300 @@ function initForm() {
   $('chrono-cancel').addEventListener('click', cancelChrono);
 }
 
-// --- Onboarding (1er lancement) ---------------------------------------
-function initOnboarding() {
-  if (readLS(LS.onboarded, false)) return;
-  const slides = isStandalone() ? [0, 1] : [0, 1, 2]; // saute « écran d'accueil » si déjà installé
-  let idx = 0;
-  const overlay = $('onboard');
-  const dots = $('onboard-dots');
-  dots.innerHTML = slides.map((_, i) => `<span class="dot${i === 0 ? ' on' : ''}"></span>`).join('');
-  const show = (i) => {
-    document.querySelectorAll('.onboard-slide').forEach((s) => { s.hidden = true; });
-    document.querySelector(`.onboard-slide[data-slide="${slides[i]}"]`).hidden = false;
-    dots.querySelectorAll('.dot').forEach((d, j) => d.classList.toggle('on', j === i));
-    $('onboard-next').textContent = i === slides.length - 1 ? "C'est parti" : 'Continuer';
-    if (slides[i] === 0) setTimeout(() => $('ob-prenom').focus(), 60);
-  };
-  overlay.hidden = false;
-  show(0);
-  $('onboard-next').addEventListener('click', () => {
-    if (slides[idx] === 0) {
-      const p = $('ob-prenom').value.trim();
-      if (p) { writeLS(LS.prenom, p); fillSettings(); }
-    }
-    if (idx < slides.length - 1) { show(++idx); }
-    else { writeLS(LS.onboarded, true); overlay.hidden = true; }
-  });
+// =====================================================================
+// AUTHENTIFICATION (écran de connexion / inscription)
+// =====================================================================
+let authMode = 'signin'; // 'signin' | 'signup'
+function showAuth() {
+  $('auth').hidden = false;
+  $('app-main').hidden = true;
+  setAuthError('');
+}
+function hideAuth() { $('auth').hidden = true; $('app-main').hidden = false; }
+function setAuthError(msg) { const el = $('auth-error'); if (el) { el.textContent = msg || ''; el.hidden = !msg; } }
+function setAuthMode(mode) {
+  authMode = mode;
+  $('auth-title').textContent = mode === 'signup' ? 'Créer un compte' : 'Connexion';
+  $('auth-submit').textContent = mode === 'signup' ? 'Créer mon compte' : 'Se connecter';
+  $('auth-toggle').innerHTML = mode === 'signup'
+    ? 'Déjà un compte ? <a href="#" id="auth-toggle-link">Se connecter</a>'
+    : 'Pas de compte ? <a href="#" id="auth-toggle-link">En créer un</a>';
+  $('auth-forgot').hidden = mode === 'signup';
+  $('auth-toggle-link').addEventListener('click', (e) => { e.preventDefault(); setAuthMode(mode === 'signup' ? 'signin' : 'signup'); });
+  setAuthError('');
 }
 
-// --- Assistant (chat Claude via Edge Function) ------------------------
+async function submitAuth() {
+  const email = $('auth-email').value.trim();
+  const pass = $('auth-pass').value;
+  if (!email || !pass) return setAuthError('Renseigne ton email et ton mot de passe.');
+  const btn = $('auth-submit'); btn.disabled = true; const label = btn.textContent; btn.textContent = '…';
+  setAuthError('');
+  try {
+    if (authMode === 'signup') {
+      const data = await auth.signUp(email, pass);
+      if (!data?.session) {
+        // Email de confirmation requis (config) → pas de session immédiate.
+        setAuthError('Compte créé. Vérifie ta boîte mail pour confirmer, puis connecte-toi.');
+        setAuthMode('signin');
+        return;
+      }
+    } else {
+      await auth.signIn(email, pass);
+    }
+    // onAuthChange déclenchera l'entrée dans l'app.
+  } catch (e) {
+    setAuthError(e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+async function doForgot() {
+  const email = $('auth-email').value.trim();
+  if (!email) return setAuthError('Entre ton email d\'abord.');
+  try { await auth.resetPassword(email); setAuthError('Email de réinitialisation envoyé (si un compte existe).'); }
+  catch (e) { setAuthError(e.message); }
+}
+
+function initAuthUI() {
+  setAuthMode('signin');
+  $('auth-submit').addEventListener('click', submitAuth);
+  $('auth-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
+  $('auth-forgot').addEventListener('click', (e) => { e.preventDefault(); doForgot(); });
+  $('btn-signout').addEventListener('click', async () => { await auth.signOut(); location.reload(); });
+}
+
+// =====================================================================
+// DOMICILES (sélecteur, création, partage)
+// =====================================================================
+async function refreshDomiciles() {
+  const list = await getMyDomiciles(dom.getUserId());
+  dom.setDomiciles(list);
+  renderDomicileSelector();
+}
+
+function renderDomicileSelector() {
+  const sel = $('domicile-select');
+  if (!sel) return;
+  const list = dom.getDomiciles();
+  sel.innerHTML = list.map((d) => `<option value="${d.id}"${d.id === dom.currentId() ? ' selected' : ''}>${escapeHtml(d.nom)}</option>`).join('')
+    + '<option value="__add__">➕ Ajouter un domicile…</option>';
+}
+
+async function onDomicileChange(e) {
+  const v = e.target.value;
+  if (v === '__add__') { renderDomicileSelector(); openDomicileForm(); return; }
+  dom.setCurrent(v);
+  reglages = dom.currentReglages() || { ...DEFAULTS };
+  loadCache();
+  fillSettings();
+  render();
+  await Promise.all([loadWeather(true), syncData()]);
+  fillSettings();
+  render();
+}
+
+// --- Création / édition d'un domicile ---
+let picked = null; // { lat, lon, timezone, label }
+function openDomicileForm() {
+  $('domicile-form').hidden = false;
+  $('df-nom').value = '';
+  $('df-adresse').value = '';
+  $('df-results').innerHTML = '';
+  $('df-coords').textContent = '';
+  $('df-error').textContent = '';
+  picked = null;
+  setTimeout(() => $('df-nom').focus(), 60);
+}
+function closeDomicileForm() { $('domicile-form').hidden = true; }
+
+async function searchAddress() {
+  const q = $('df-adresse').value.trim();
+  if (!q) return;
+  const box = $('df-results'); box.innerHTML = '<div class="df-hint">Recherche…</div>';
+  try {
+    let list = await geocodeAddress(q);
+    if (!list.length) list = await geocodeAddressPrecise(q); // repli précision rue
+    if (!list.length) { box.innerHTML = '<div class="df-hint">Aucun résultat.</div>'; return; }
+    box.innerHTML = '';
+    list.forEach((r) => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'df-result';
+      b.textContent = r.label;
+      b.addEventListener('click', () => pickLocation(r.lat, r.lon, r.timezone, r.label));
+      box.appendChild(b);
+    });
+  } catch (e) { box.innerHTML = `<div class="df-hint">Erreur de recherche : ${escapeHtml(e.message)}</div>`; }
+}
+
+async function useMyPosition() {
+  const box = $('df-results'); box.innerHTML = '<div class="df-hint">Localisation…</div>';
+  try {
+    const { lat, lon } = await currentPosition();
+    const rev = await reverseGeocode(lat, lon);
+    pickLocation(lat, lon, null, rev?.label || `${lat}, ${lon}`);
+    box.innerHTML = '';
+  } catch (e) { box.innerHTML = `<div class="df-hint">${escapeHtml(e.message)}</div>`; }
+}
+
+function pickLocation(lat, lon, tz, label) {
+  picked = { lat, lon, timezone: tz || 'Europe/Zurich', label };
+  $('df-coords').innerHTML = `📍 <b>${escapeHtml(label)}</b><br><span class="df-latlon">${lat}, ${lon}</span>`;
+  if (!$('df-nom').value.trim()) $('df-nom').value = String(label).split(',')[0].trim();
+  $('df-results').innerHTML = '';
+}
+
+async function saveDomicile() {
+  const nom = $('df-nom').value.trim();
+  const err = $('df-error');
+  if (!nom) { err.textContent = 'Donne un nom à ce domicile.'; return; }
+  if (!picked) { err.textContent = 'Choisis un emplacement (adresse ou « ma position »).'; return; }
+  const btn = $('df-save'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Création…';
+  err.textContent = '';
+  try {
+    const created = await createDomicile({
+      ownerId: dom.getUserId(), nom, adresse: picked.label,
+      lat: picked.lat, lon: picked.lon, timezone: picked.timezone,
+    });
+    await refreshDomiciles();
+    dom.setCurrent(created.id);
+    renderDomicileSelector();
+    closeDomicileForm();
+    loadCache();
+    fillSettings();
+    render();
+    await Promise.all([loadWeather(true), syncData()]);
+    fillSettings();
+    render();
+    toast(`✓ Domicile « ${nom} » ajouté`);
+  } catch (e) {
+    err.textContent = 'Échec : ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = label;
+  }
+}
+
+// --- Partage (invitations + membres) ---
+async function openShare() {
+  $('share-panel').hidden = false;
+  $('share-link-box').hidden = true;
+  await renderMembers();
+  await renderInvitations();
+}
+function closeShare() { $('share-panel').hidden = true; }
+
+async function renderMembers() {
+  const el = $('share-members');
+  try {
+    const members = await getMembers(dom.currentId());
+    el.innerHTML = members.map((m) => {
+      const me = m.user_id === dom.getUserId();
+      const canRemove = dom.isAdmin() && !me && m.role !== 'owner';
+      const rm = canRemove ? `<button class="link-btn" data-remove="${m.user_id}">retirer</button>` : '';
+      return `<li><span>${escapeHtml(m.prenom || '(sans nom)')} <span class="who">${m.role}${me ? ' · toi' : ''}</span></span>${rm}</li>`;
+    }).join('');
+    el.querySelectorAll('[data-remove]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await removeMember(dom.currentId(), b.dataset.remove); await renderMembers(); }
+      catch (e) { toast('❌ ' + e.message); b.disabled = false; }
+    }));
+  } catch (e) { el.innerHTML = `<li class="df-hint">${escapeHtml(e.message)}</li>`; }
+}
+
+async function renderInvitations() {
+  const el = $('share-invites');
+  if (!dom.isAdmin()) { el.innerHTML = ''; $('btn-gen-invite').hidden = true; return; }
+  $('btn-gen-invite').hidden = false;
+  try {
+    const invs = await listInvitations(dom.currentId());
+    const active = invs.filter((i) => !i.revoked && new Date(i.expires_at) > new Date());
+    el.innerHTML = active.length
+      ? active.map((i) => `<li><span class="who">expire ${new Date(i.expires_at).toLocaleDateString('fr-FR')}</span> <button class="link-btn" data-copy="${i.token}">copier le lien</button> <button class="link-btn" data-revoke="${i.token}">révoquer</button></li>`).join('')
+      : '<li class="df-hint">Aucune invitation active.</li>';
+    el.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => copyInviteLink(b.dataset.copy)));
+    el.querySelectorAll('[data-revoke]').forEach((b) => b.addEventListener('click', async () => {
+      b.disabled = true;
+      try { await revokeInvitation(b.dataset.revoke); await renderInvitations(); }
+      catch (e) { toast('❌ ' + e.message); b.disabled = false; }
+    }));
+  } catch (e) { el.innerHTML = `<li class="df-hint">${escapeHtml(e.message)}</li>`; }
+}
+
+function inviteUrl(token) {
+  return `${location.origin}${location.pathname}?token=${token}`;
+}
+async function generateInvite() {
+  const btn = $('btn-gen-invite'); btn.disabled = true;
+  try {
+    const inv = await createInvitation(dom.currentId(), 'member');
+    const url = inviteUrl(inv.token);
+    $('share-link').value = url;
+    $('share-link-box').hidden = false;
+    await renderInvitations();
+    copyInviteLink(inv.token);
+  } catch (e) { toast('❌ ' + e.message); }
+  finally { btn.disabled = false; }
+}
+async function copyInviteLink(token) {
+  const url = inviteUrl(token);
+  try { await navigator.clipboard.writeText(url); toast('🔗 Lien copié — partage-le'); }
+  catch { $('share-link').value = url; $('share-link-box').hidden = false; toast('🔗 Lien prêt à copier'); }
+}
+
+function initDomicileUI() {
+  $('domicile-select').addEventListener('change', onDomicileChange);
+  $('df-search').addEventListener('click', searchAddress);
+  $('df-adresse').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchAddress(); } });
+  $('df-mypos').addEventListener('click', useMyPosition);
+  $('df-save').addEventListener('click', saveDomicile);
+  $('df-cancel').addEventListener('click', closeDomicileForm);
+  $('btn-share').addEventListener('click', openShare);
+  $('share-close').addEventListener('click', closeShare);
+  $('btn-gen-invite').addEventListener('click', generateInvite);
+  $('share-copy').addEventListener('click', () => { const t = new URL($('share-link').value).searchParams.get('token'); if (t) copyInviteLink(t); });
+}
+
+// Après connexion : traite un lien d'invitation en attente, charge les domiciles.
+function pendingInviteToken() {
+  const u = new URL(location.href);
+  return u.searchParams.get('token');
+}
+function clearInviteToken() {
+  const u = new URL(location.href);
+  u.searchParams.delete('token');
+  history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+}
+
+async function enterApp(user) {
+  dom.setUser(user.id);
+  hideAuth();
+  // Invitation en attente ?
+  const token = pendingInviteToken();
+  if (token) {
+    try { await acceptInvitation(token); toast('✓ Tu as rejoint un domicile partagé'); }
+    catch (e) { toast('Invitation : ' + e.message); }
+    clearInviteToken();
+  }
+  await refreshDomiciles();
+  if (!dom.getDomiciles().length) {
+    // Aucun domicile → invite à en créer un.
+    openDomicileForm();
+    $('df-error').textContent = 'Bienvenue ! Crée ton premier domicile pour commencer.';
+    return;
+  }
+  loadCache();
+  initPush();
+  fillSettings();
+  render();
+  await Promise.all([loadWeather(), syncData()]);
+  fillSettings();
+  render();
+}
+
+// =====================================================================
+// Assistant (chat Claude via Edge Function)
+// =====================================================================
 let chatHistory = [];
 let chatSending = false;
 const VERDICT_LABEL = {
@@ -656,14 +897,19 @@ const VERDICT_LABEL = {
 };
 
 function chatContext() {
-  const today = todayZurich();
+  const today = todayLocal();
+  const d0 = dom.current();
   let m = null, etat = 'inconnu', minutes = null;
   if (weather) {
     const d = decide({ weather, arrosages, reglages, today, contraintes });
     m = d.metrics; etat = VERDICT_LABEL[d.etat] || d.etat; minutes = d.minutes ?? null;
   }
+  const membres = (d0?.domicile_members || []).map((x) => x.prenom).filter(Boolean).join(', ');
   return {
     today, verdict: etat, minutes,
+    domicile: d0?.nom || null,
+    lieu: d0?.adresse || null,
+    membres: membres || null,
     objectif_mm: m?.objectif ?? null,
     pluie_prevue: m ? round1(m.pluie_prevue) : null,
     pluie_48h: m ? round1(m.pluie_48h) : null,
@@ -683,8 +929,6 @@ function chatBubble(role, text) {
   return el;
 }
 
-// Coût maîtrisé : on n'envoie que les N derniers tours (le contexte du jour
-// est de toute façon reconstruit à chaque appel), en gardant un début 'user'.
 const CHAT_HISTORY_MAX = 16;
 function trimmedChatHistory() {
   let h = chatHistory.slice(-CHAT_HISTORY_MAX);
@@ -704,24 +948,21 @@ async function chatSend() {
   const btn = $('chat-send'); btn.disabled = true;
   const thinking = chatBubble('bot', '…');
   try {
+    const jwt = await auth.accessToken();
     const res = await fetch(CHAT_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY },
+      headers: { 'content-type': 'application/json', apikey: SUPA_KEY, Authorization: 'Bearer ' + (jwt || SUPA_KEY) },
       body: JSON.stringify({ messages: trimmedChatHistory(), context: chatContext() }),
     });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || ('HTTP ' + res.status)); }
     const data = await res.json();
     thinking.remove();
-    // Réponse « outil seul » (pas de texte) : afficher le résumé de l'action
-    // proposée plutôt qu'un faux « (réponse vide) » qui polluerait l'historique.
     const reply = (data.reply && data.reply.trim())
       || (data.action?.resume ? `Je te propose : ${data.action.resume}` : '(réponse vide)');
     chatHistory.push({ role: 'assistant', content: reply });
     chatBubble('bot', reply);
     if (data.action && data.action.type === 'absence') renderChatAction(data.action);
   } catch (e) {
-    // Échec : retirer le tour utilisateur de l'historique (rien n'a été traité)
-    // et remettre le texte dans le champ pour réessayer d'un tap.
     if (chatHistory[chatHistory.length - 1]?.role === 'user') chatHistory.pop();
     if (!input.value) input.value = text;
     thinking.remove();
@@ -741,21 +982,17 @@ function renderChatAction(action) {
   b.textContent = '✓ Appliquer : ' + (action.resume || `absence ${action.debut} → ${action.fin}`);
   b.addEventListener('click', async () => {
     b.disabled = true; b.textContent = 'Enregistrement…';
-    // Idempotence : si la même fenêtre existe déjà (double clic, réessai après
-    // un succès dont la réponse s'est perdue), ne pas insérer de doublon.
     const dejaLa = () => contraintes.some((c) => c.type === 'absence' && c.debut === action.debut && c.fin === action.fin);
     try {
       if (!dejaLa()) {
-        await addContrainte({ type: 'absence', debut: action.debut, fin: action.fin, note: action.resume, auteur: getPrenom() });
+        await addContrainte({ domicileId: dom.currentId(), type: 'absence', debut: action.debut, fin: action.fin, note: action.resume, auteur: getPrenom() });
       }
     } catch (e) {
       b.disabled = false; b.textContent = '✓ Appliquer';
       chatBubble('bot', '⚠️ Échec de l\'enregistrement : ' + e.message);
       return;
     }
-    // L'insertion a réussi : un échec de la re-synchro ne doit PAS réafficher
-    // le bouton (sinon double insertion au clic suivant).
-    try { await syncData(); render(); } catch { /* re-synchro au prochain retour sur la page */ }
+    try { await syncData(); render(); } catch { /* re-synchro au prochain retour */ }
     wrap.className = 'chat-action done';
     wrap.textContent = '✓ Enregistré — le dashboard est à jour.';
   });
@@ -764,25 +1001,33 @@ function renderChatAction(action) {
   log.scrollTop = log.scrollHeight;
 }
 
+// =====================================================================
+// INIT
+// =====================================================================
 async function init() {
-  await ensurePersistentStorage();  // demande la persistance AVANT tout (fix reset iOS)
-  loadCache();
+  await ensurePersistentStorage();
   initForm();
-  initPush();
-  initOnboarding();
-  render();                 // cache-first : affichage immédiat
-  await Promise.all([loadWeather(), syncData()]);
-  fillSettings();           // rafraîchit objectif/débit depuis Supabase
-  render();
+  initAuthUI();
+  initDomicileUI();
+
+  // Réagit aux changements de session (connexion, refresh, déconnexion).
+  auth.onAuthChange((event, session) => {
+    if (event === 'SIGNED_OUT') { showAuth(); }
+  });
+
+  const session = await auth.getSession();
+  if (session?.user) {
+    await enterApp(session.user);
+  } else {
+    // Pas de session : on montre le login (le token d'invitation éventuel est
+    // conservé dans l'URL et traité après connexion).
+    showAuth();
+    if (pendingInviteToken()) setAuthError('Connecte-toi ou crée un compte pour rejoindre le domicile partagé.');
+  }
 }
 
 // Service worker : cache hors-ligne + réception des push.
 if ('serviceWorker' in navigator) {
-  // Quand un nouveau SW prend le contrôle (après un déploiement), recharger une
-  // fois pour charger la version cohérente (HTML+JS+CSS du même déploiement).
-  // ⚠️ Pas de reload à la PREMIÈRE installation (clients.claim() déclenche
-  // controllerchange alors que rien n'était périmé) : on ne recharge que si
-  // un contrôleur existait déjà au chargement de la page.
   const hadController = !!navigator.serviceWorker.controller;
   let swReloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
@@ -814,7 +1059,6 @@ function initPush() {
   const hint = $('push-hint');
   if (!box || !btn) return;
 
-  // iOS : le push n'existe QUE dans la PWA installée (mode standalone).
   const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
   if (!supported || !isStandalone()) { box.hidden = true; return; }
   box.hidden = false;
@@ -852,7 +1096,7 @@ async function enablePush() {
       userVisibleOnly: true,
       applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC),
     });
-    await upsertSubscription(sub, getPrenom());
+    await upsertSubscription(sub, { userId: dom.getUserId(), domicileId: dom.currentId(), auteur: getPrenom() });
     btn.textContent = '🔔 Notifications activées';
     hint.textContent = 'Tu recevras un rappel le matin quand il faut arroser.';
   } catch (e) {
@@ -862,9 +1106,9 @@ async function enablePush() {
   }
 }
 
-// Re-synchro quand la page redevient visible (l'arrosage de l'autre apparaît).
+// Re-synchro quand la page redevient visible.
 document.addEventListener('visibilitychange', async () => {
-  if (document.visibilityState === 'visible') {
+  if (document.visibilityState === 'visible' && dom.currentId()) {
     await Promise.all([loadWeather(), syncData()]);
     fillSettings();
     render();

@@ -5,16 +5,22 @@
 import webpush from 'web-push';
 import { fileURLToPath } from 'node:url';
 import { decide, findTodayIdx, round1 } from '../engine.js';
-import { getArrosages, getReglages, getContraintes, getSubscriptions, deleteSubscription } from '../store.js';
+import { configureStore, getAllDomiciles, getArrosages, getContraintes, getSubscriptions, deleteSubscription } from '../store.js';
 import { fetchWeatherData } from '../weather.js';
 import { VAPID_PUBLIC } from '../config.js';
 
+// Serveur : la RLS est fermée → on lit avec la clé SECRÈTE (service_role, secret
+// GitHub Actions SB_SECRET). Les nouvelles clés vont UNIQUEMENT dans `apikey`
+// (jamais en Authorization: Bearer, sinon la plateforme la rejette).
+const SB_SECRET = process.env.SB_SECRET;
+configureStore(async () => ({ apikey: SB_SECRET }));
 
-function zurichHour(d = new Date()) {
-  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Zurich', hour: '2-digit', hourCycle: 'h23' }).format(d));
+// Heure / date locale d'un domicile (chaque domicile a son fuseau).
+function localHour(tz, d = new Date()) {
+  return Number(new Intl.DateTimeFormat('en-GB', { timeZone: tz || 'Europe/Zurich', hour: '2-digit', hourCycle: 'h23' }).format(d));
 }
-function zurichToday(d = new Date()) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Zurich', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+function localToday(tz, d = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: tz || 'Europe/Zurich', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
 }
 
 // --- Décision → notification (PURE, testable) --------------------------
@@ -63,55 +69,67 @@ export function planNotification({ weather, arrosages, reglages, today, contrain
 
 async function main() {
   const force = process.env.FORCE === '1';
-  const h = zurichHour();
-  if (!force && h !== 6) {
-    console.log(`Heure locale Zurich = ${h}h ≠ 6h → rien à faire (l'autre créneau cron s'en chargera).`);
-    return;
-  }
 
   const priv = process.env.VAPID_PRIVATE_KEY;
   if (!priv) throw new Error('VAPID_PRIVATE_KEY manquant (secret GitHub Actions).');
+  if (!SB_SECRET) throw new Error('SB_SECRET manquant (clé service_role, secret GitHub Actions).');
   if (!VAPID_PUBLIC || VAPID_PUBLIC.startsWith('COLLE_')) throw new Error('VAPID_PUBLIC non renseigné dans config.js.');
   webpush.setVapidDetails('mailto:ernestchapl27@gmail.com', VAPID_PUBLIC, priv);
 
-  const today = zurichToday();
-  const [weather, arrosages, reglages, contraintes] = await Promise.all([
-    fetchWeatherData(), getArrosages(), getReglages(), getContraintes(),
-  ]);
-  // ⚠️ Garder TOUS les réglages (kc, objectif_manuel inclus) : le push doit
-  // calculer exactement le même objectif que la page (une seule logique).
-  const reg = reglages ? {
-    objectif_mm: Number(reglages.objectif_mm),
-    debit_mm_h: Number(reglages.debit_mm_h),
-    kc: reglages.kc != null ? Number(reglages.kc) : undefined,
-    objectif_manuel: reglages.objectif_manuel === true,
-  } : undefined;
+  // Tous les domiciles + tous les abonnements (clé secrète, bypass RLS), groupés.
+  const domiciles = await getAllDomiciles();
+  const allSubs = await getSubscriptions();
+  const subsByDom = {};
+  for (const s of allSubs) { if (s.domicile_id) (subsByDom[s.domicile_id] ||= []).push(s); }
+  console.log(`${domiciles.length} domicile(s), ${allSubs.length} abonnement(s).`);
 
-  const plan = planNotification({ weather, arrosages, reglages: reg, today, contraintes });
-  console.log(`État du jour : ${plan.etat} — push : ${plan.push ? 'OUI' : 'non'}`);
-  if (!plan.push) return;
+  let totalSent = 0, totalCleaned = 0;
+  for (const dm of domiciles) {
+    const tz = dm.timezone || 'Europe/Zurich';
+    const h = localHour(tz);
+    // Rappel à 6h LOCALE de chaque domicile (le cron tourne à 4h30/5h30 UTC).
+    if (!force && h !== 6) { console.log(`[${dm.nom}] ${h}h local ≠ 6h → skip`); continue; }
 
-  const subs = await getSubscriptions();
-  console.log(`${subs.length} abonnement(s) à notifier.`);
-  const payload = JSON.stringify({ title: plan.title, body: plan.body });
+    const today = localToday(tz);
+    // Réglages du domicile (kc, objectif_manuel inclus) → même objectif que la page.
+    const reg = {
+      objectif_mm: Number(dm.objectif_mm),
+      debit_mm_h: Number(dm.debit_mm_h),
+      kc: dm.kc != null ? Number(dm.kc) : undefined,
+      objectif_manuel: dm.objectif_manuel === true,
+    };
 
-  let sent = 0, cleaned = 0;
-  for (const row of subs) {
+    let weather, arrosages, contraintes;
     try {
-      await webpush.sendNotification(row.subscription, payload, { TTL: 3600, urgency: 'high' });
-      sent++;
-    } catch (e) {
-      const code = e.statusCode;
-      if (code === 404 || code === 410) {
-        await deleteSubscription(row.endpoint).catch(() => {});
-        cleaned++;
-        console.log(`Abonnement mort (${code}) supprimé : ${row.auteur || '?'}`);
-      } else {
-        console.warn(`Échec push (${code}) pour ${row.auteur || '?'} : ${e.message}`);
+      [weather, arrosages, contraintes] = await Promise.all([
+        fetchWeatherData({ lat: dm.lat, lon: dm.lon, tz }),
+        getArrosages(dm.id), getContraintes(dm.id),
+      ]);
+    } catch (e) { console.warn(`[${dm.nom}] données indisponibles : ${e.message}`); continue; }
+
+    const plan = planNotification({ weather, arrosages, reglages: reg, today, contraintes });
+    console.log(`[${dm.nom}] état=${plan.etat} push=${plan.push ? 'OUI' : 'non'}`);
+    if (!plan.push) continue;
+
+    const subs = subsByDom[dm.id] || [];
+    const payload = JSON.stringify({ title: plan.title, body: plan.body });
+    for (const row of subs) {
+      try {
+        await webpush.sendNotification(row.subscription, payload, { TTL: 3600, urgency: 'high' });
+        totalSent++;
+      } catch (e) {
+        const code = e.statusCode;
+        if (code === 404 || code === 410) {
+          await deleteSubscription(row.endpoint).catch(() => {});
+          totalCleaned++;
+          console.log(`[${dm.nom}] abonnement mort (${code}) supprimé : ${row.auteur || '?'}`);
+        } else {
+          console.warn(`[${dm.nom}] échec push (${code}) pour ${row.auteur || '?'} : ${e.message}`);
+        }
       }
     }
   }
-  console.log(`Terminé : ${sent} envoyé(s), ${cleaned} nettoyé(s).`);
+  console.log(`Terminé : ${totalSent} envoyé(s), ${totalCleaned} nettoyé(s).`);
 }
 
 // N'exécute main() que lancé directement (pas à l'import pour les tests).

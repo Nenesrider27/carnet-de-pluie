@@ -48,6 +48,14 @@ export async function getMyDomiciles(userId) {
   return res.json();
 }
 
+// TOUS les domiciles (usage SERVEUR uniquement, avec la clé secrète — bypass RLS).
+// Utilisé par le push matinal pour itérer sur chaque domicile.
+export async function getAllDomiciles() {
+  const res = await fetch(`${REST}/domiciles?select=*`, { headers: await headers(), cache: 'no-store' });
+  await ok(res, 'GET all domiciles');
+  return res.json();
+}
+
 // Crée un domicile. owner_id DOIT être l'utilisateur courant (contrôle RLS insert).
 // Le trigger l'inscrit automatiquement comme owner-membre.
 export async function createDomicile({ ownerId, nom, adresse, lat, lon, timezone, objectif_mm, debit_mm_h, kc, objectif_manuel }) {

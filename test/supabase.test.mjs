@@ -1,51 +1,73 @@
-// Test d'intégration Supabase — node test/supabase.test.mjs
-// Exécute un cycle CRUD réel sur la base partagée, puis nettoie.
-// Non destructif : n'utilise qu'un jour bidon (2020-01-01) et ne le purge que lui.
-import { getArrosages, getReglages, upsertArrosage, patchReglages, purgeBefore } from '../store.js';
+// test/supabase.test.mjs — tests unitaires de store.js (fetch MOCKÉ, zéro réseau).
+// L'intégration RLS réelle (isolation entre domiciles, invitation, rôles) est
+// validée séparément par supabase/rls_check.sql (simulation SQL en transaction
+// annulée). Ici on vérifie que store.js construit les bonnes requêtes :
+// filtrage par domicile_id, en-têtes d'auth injectés, RPC d'invitation.
+import { configureStore, getArrosages, upsertArrosage, getContraintes, createDomicile,
+  createInvitation, acceptInvitation, getMyDomiciles, patchDomicile } from '../store.js';
 
 let pass = 0, fail = 0;
-const check = (name, cond, detail = '') => {
-  if (cond) { pass++; console.log(`  ✅ ${name}`); }
-  else { fail++; console.log(`  ❌ ${name}${detail ? ' → ' + detail : ''}`); }
+const check = (n, c, d = '') => { if (c) { pass++; console.log('  ✅ ' + n); } else { fail++; console.log('  ❌ ' + n + (d ? ' → ' + d : '')); } };
+
+// fetch mocké : enregistre chaque appel, renvoie une réponse OK générique.
+let calls = [];
+globalThis.fetch = async (url, opts = {}) => {
+  calls.push({ url, headers: opts.headers || {}, method: opts.method || 'GET', body: opts.body });
+  return { ok: true, status: 200, async json() { return [{ ok: true }]; }, async text() { return ''; } };
 };
-const TESTDAY = '2020-01-01';
 
-console.log('\n=== INTÉGRATION SUPABASE (base réelle) ===\n');
-try {
-  // 1) Réglages par défaut lisibles
-  const reg = await getReglages();
-  check('getReglages renvoie la ligne id=1', reg && reg.id === 1, JSON.stringify(reg));
-  check('objectif par défaut = 28', Number(reg?.objectif_mm) === 28);
-  check('débit par défaut = 27', Number(reg?.debit_mm_h) === 27);
+console.log('\n=== STORE.JS (unitaire, fetch mocké) ===\n');
 
-  // 2) Upsert insert
-  const a1 = await upsertArrosage({ jour: TESTDAY, minutes: 20, auteur: 'TEST' });
-  check('upsert insert renvoie la ligne', a1?.minutes === 20 && a1?.jour === TESTDAY, JSON.stringify(a1));
+// Provider d'auth simulé (navigateur : JWT).
+configureStore(async () => ({ apikey: 'PUB', Authorization: 'Bearer JWT123' }));
 
-  // 3) L'arrosage est bien relu
-  let list = await getArrosages();
-  check('getArrosages contient le jour test', list.some(r => r.jour === TESTDAY && r.minutes === 20));
+// getArrosages : filtre domicile_id + en-têtes d'auth.
+calls = []; await getArrosages('DOM1');
+check('getArrosages filtre domicile_id', calls[0].url.includes('domicile_id=eq.DOM1'), calls[0].url);
+check('getArrosages envoie apikey publishable', calls[0].headers.apikey === 'PUB');
+check('getArrosages envoie Bearer JWT (RLS)', calls[0].headers.Authorization === 'Bearer JWT123');
 
-  // 4) Upsert même jour = REMPLACE (pas d'addition côté serveur)
-  const a2 = await upsertArrosage({ jour: TESTDAY, minutes: 35, auteur: 'TEST2' });
-  check('upsert même jour remplace (35, pas 55)', a2?.minutes === 35, JSON.stringify(a2));
+// upsertArrosage : on_conflict (domicile,jour) + body contient domicile_id.
+calls = []; await upsertArrosage({ domicileId: 'DOM1', jour: '2020-01-01', minutes: 20, auteur: 'X' });
+check('upsert on_conflict=domicile_id,jour', calls[0].url.includes('on_conflict=domicile_id,jour'), calls[0].url);
+const b1 = JSON.parse(calls[0].body);
+check('upsert body a domicile_id + minutes', b1.domicile_id === 'DOM1' && b1.minutes === 20);
+check('upsert Prefer merge-duplicates', String(calls[0].headers.Prefer || '').includes('merge-duplicates'));
 
-  // 5) PATCH réglages puis remise à l'état par défaut
-  const p1 = await patchReglages({ objectif_mm: 30, debit_mm_h: 25 });
-  check('patch réglages applique 30/25', Number(p1.objectif_mm) === 30 && Number(p1.debit_mm_h) === 25);
-  const p2 = await patchReglages({ objectif_mm: 28, debit_mm_h: 27 });
-  check('patch réglages remis à 28/27', Number(p2.objectif_mm) === 28 && Number(p2.debit_mm_h) === 27);
+// getContraintes : filtre domicile_id.
+calls = []; await getContraintes('DOM2');
+check('getContraintes filtre domicile_id', calls[0].url.includes('domicile_id=eq.DOM2'));
 
-  // 6) Purge du jour test uniquement
-  await purgeBefore('2020-06-01');
-  list = await getArrosages();
-  check('purge a supprimé le jour test', !list.some(r => r.jour === TESTDAY));
-} catch (e) {
-  fail++;
-  console.log('  ❌ EXCEPTION:', e.message);
-  // filet de sécurité : tenter de nettoyer le jour test
-  try { await purgeBefore('2020-06-01'); } catch {}
-}
+// createDomicile : owner_id + coordonnées dans le body.
+calls = []; await createDomicile({ ownerId: 'U1', nom: 'Test', lat: 1.23, lon: 4.56, timezone: 'Europe/Paris' });
+const b2 = JSON.parse(calls[0].body);
+check('createDomicile envoie owner_id', b2.owner_id === 'U1');
+check('createDomicile envoie lat/lon/timezone', b2.lat === 1.23 && b2.lon === 4.56 && b2.timezone === 'Europe/Paris');
+
+// patchDomicile : cible le bon id.
+calls = []; await patchDomicile('DOM1', { debit_mm_h: 30 });
+check('patchDomicile cible id=eq.DOM1', calls[0].url.includes('id=eq.DOM1') && calls[0].method === 'PATCH');
+
+// createInvitation : body domicile_id + role.
+calls = []; await createInvitation('DOM1', 'member');
+const b3 = JSON.parse(calls[0].body);
+check('createInvitation body domicile_id+role', b3.domicile_id === 'DOM1' && b3.role === 'member');
+
+// acceptInvitation : appelle la RPC avec _token.
+calls = []; await acceptInvitation('TOK');
+check('acceptInvitation appelle /rpc/accept_invitation', calls[0].url.includes('/rpc/accept_invitation'));
+check('acceptInvitation passe _token', JSON.parse(calls[0].body)._token === 'TOK');
+
+// getMyDomiciles : jointure membership + filtre user.
+calls = []; await getMyDomiciles('U1');
+check('getMyDomiciles jointure !inner', calls[0].url.includes('domicile_members!inner'));
+check('getMyDomiciles filtre user_id', calls[0].url.includes('domicile_members.user_id=eq.U1'));
+
+// Provider serveur (clé secrète, PAS de Bearer).
+configureStore(async () => ({ apikey: 'SECRET' }));
+calls = []; await getArrosages('DOM1');
+check('mode serveur : apikey secrète', calls[0].headers.apikey === 'SECRET');
+check('mode serveur : pas de Bearer', !calls[0].headers.Authorization);
 
 console.log(`\n=== ${pass} PASS / ${fail} FAIL ===\n`);
 process.exit(fail === 0 ? 0 : 1);
