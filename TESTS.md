@@ -243,3 +243,19 @@ Rien n'est marqué « fini » sans avoir été exécuté sur de vraies données.
 - **UI** : --ink-faint 3.65:1 → **5.11:1** (vérifié live) ; micro-typo relevée ; inputs 44px.
 
 ### Suite : 71 tests verts (engine 26, contraintes 10, objectif 15, notify 11, supabase 9).
+
+---
+
+## Bug « Lancer le chrono ne marche pas » — post-mortem (2 couches)
+
+### Couche 1 — CSS : `display:flex` écrase l'attribut `hidden`
+- **Symptôme** : boutons chrono + tip visibles sous « Rien à faire » ; clic → `startChrono(0)` → no-op silencieux.
+- **Cause** : règle standard des navigateurs — un `display` explicite (flex/grid) dans le CSS auteur l'emporte sur la règle UA `[hidden]{display:none}`. `.v-actions`, `.tip`, `.week`, `#manuel-field` étaient concernés.
+- **Fix** : `[hidden] { display: none !important; }` global.
+- **Leçon de test** : mon harness vérifiait la **propriété** `el.hidden` (vraie) au lieu du **style calculé** (`getComputedStyle(el).display`) → test vert, écran faux. Désormais : toujours vérifier le rendu calculé.
+
+### Couche 2 — SW : le précache passait par le cache HTTP
+- **Symptôme** : le fix v6 déployé ne changeait rien chez l'utilisateur.
+- **Cause** : `cache.addAll(CORE)` utilise le cache HTTP (GitHub Pages max-age=600) → le NOUVEAU service worker précachait l'ANCIEN styles.css. Le cache versionné n'était pas réellement atomique.
+- **Fix** : `addAll(CORE.map(u => new Request(u, { cache: 'reload' })))` — précache réseau forcé. v7.
+- **Vérifié dans le navigateur d'Ernest** (extension Chrome) : cache `cp-v7` seul, `actionsDisplay:"none"` sous « Rien à faire », règle `[hidden]` active.
