@@ -225,3 +225,21 @@ Rien n'est marqué « fini » sans avoir été exécuté sur de vraies données.
 - **Garde-fou honnête** : endpoint public → plafond de dépense sur la clé Anthropic = vraie protection.
 
 ### Total : 66 tests unitaires/intégration au vert (26 + 8 + 15 + 8 + 9) + vérifs headless + appel Claude réel.
+
+---
+
+## Revue de code (/code-review) + Audit UI Playwright
+
+### Méthode
+- 5 finders parallèles (ligne-à-ligne, comportements supprimés/cross-file, Edge Function/chat, SW/rendu, cleanup/conventions) → ~30 candidats.
+- 3 vérificateurs indépendants → 15 CONFIRMED, 2 PLAUSIBLE, 5 REFUTED (par design : fractionnement avant-départ, jour du retour inclusif, etc.).
+- Audit Playwright (chromium/canal Chrome, viewport iPhone) sur le site LIVE : captures 7 états, contrastes WCAG, cibles tactiles, débordements, **message réel envoyé au chat** (réponse correcte sur le Kc ✅).
+
+### Corrigé (tout ce qui était confirmé)
+- **Une seule logique** : `weather.js` partagé (fetch + repli ET₀ dès la moindre lacune) ; morning-push reçoit contraintes + kc/objectif_manuel ; push 🧳 « avant de partir » ; silence si absent.
+- **Moteur** : pluie post-retour n'annule plus le nudge avant-départ (test H) ; garde idx=-1.
+- **App** : bandeau climat honnête (manuel/formulation/état erreur) ; cache pré-ET₀ re-fetché ; pas de reload SW à la 1re installation ; chat (repli outil-seul, historique borné 16, échec propre, Appliquer idempotent).
+- **Edge Function** (redéploiement optionnel) : Vary: Origin, garde data, première action gagne, repli reply.
+- **UI** : --ink-faint 3.65:1 → **5.11:1** (vérifié live) ; micro-typo relevée ; inputs 44px.
+
+### Suite : 71 tests verts (engine 26, contraintes 10, objectif 15, notify 11, supabase 9).
