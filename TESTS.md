@@ -194,3 +194,34 @@ Rien n'est marqué « fini » sans avoir été exécuté sur de vraies données.
 ### Reste sur appareil (final)
 - Installer la PWA + activer notifs sur les 2 iPhones → test livraison push réelle (Actions force=1).
 - Test chrono réel sur téléphone (lancer 1 min → stop → entrée en base).
+
+---
+
+## Évolution — Objectif dynamique (ET₀) + Absences/Chat
+
+### E.1 API ET₀ (vérifié en premier, tout en dépend)
+- `et0_fao_evapotranspiration` **présent et non-null sur MétéoSuisse ICON CH2** (12/12) → pas de fallback nécessaire.
+- Fallback modèle global (sans `models=`) : et0 non-null aussi (12/12) → filet de sécurité confirmé, codé défensivement.
+- Données réelles du jour (canicule) : ET₀ 6–8 mm/j → objectif ~33 mm vs 28 fixe (l'ancien fixe sous-arrosait ~18 %).
+
+### E.2 Objectif dynamique (moteur) — `node test/objectif.test.mjs`
+- **15 PASS / 0 FAIL** : ET₀ 7 → objectif 39 (canicule) ; ET₀ 2.5 → borné 15 ; ET₀ absente/incomplète → repli 28 ; mode manuel → calcul ignoré ; Kc custom ; canicule resserre espacement (3→2) et MIN (10→8).
+- Non-régression : sans ET₀ → repli 28 → 26/26 moteur inchangés (test « réglages custom » mis à jour : objectif fixe = mode manuel).
+
+### E.3 Intégration app (ET₀)
+- Fetch et0 + fallback global + **cache 3 h** (quota). Bandeau climat (🔥 canicule 39 mm / 🌥️ frais 15 mm / repli). Réglages : objectif calculé, Kc éditable, mode manuel. Règle 0. ET₀ dans la bande semaine.
+- Testé headless (seed cache) : ET₀ 7 → bandeau canicule + objectif 39 ; ET₀ 2.5 → frais + 15. Visuel confirmé.
+- `morning-push.mjs` : fetch et0 → **même objectif que la page** (module engine partagé).
+
+### E.4 Absences (base du chat)
+- Moteur : états `avant-depart` / `absent` — **8 PASS / 0 FAIL** (veille du départ sec → arrose avant de partir ; pendant absence → absent ; pluie/déjà servi → pas de nudge inutile).
+- `store.js` contraintes : **4 PASS** sur la vraie base (add/get/delete/purge).
+- App : dashboard s'adapte (headless : « Arrose avant de partir » / « Tu es absent » + bande 🚪).
+
+### E.5 Chat (Edge Function Claude)
+- Panneau UI construit (bulles, contexte, « Appliquer »), dégradation gracieuse si non déployé. Visuel confirmé.
+- **Appel réel vérifié (HTTP 200)** après déploiement par Ernest : Claude comprend « vendredi 17h → dimanche soir » → dates 17-19, reprend la durée du dashboard (pas d'invention), propose l'absence structurée.
+- CORS validé pour l'origine du site. Colonnes réglages (kc/objectif_manuel) créées et lues.
+- **Garde-fou honnête** : endpoint public → plafond de dépense sur la clé Anthropic = vraie protection.
+
+### Total : 66 tests unitaires/intégration au vert (26 + 8 + 15 + 8 + 9) + vérifs headless + appel Claude réel.
