@@ -61,6 +61,9 @@ export function currentLoc() {
 
 // Clé de cache localStorage préfixée par le domicile courant.
 export function nsKey(base) { return `cp.${_currentId || 'none'}.${base}`; }
+// Idem mais pour un domicile EXPLICITE (anti-course : écrire dans le bon namespace
+// même si le domicile courant a changé pendant une requête en vol).
+export function nsKeyFor(id, base) { return `cp.${id || 'none'}.${base}`; }
 
 function safeGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
 function safeSet(k, v) { try { localStorage.setItem(k, v); } catch {} }

@@ -80,17 +80,22 @@ function loadCache() {
   const cc = readLS(dom.nsKey('contraintes'), null); contraintes = Array.isArray(cc) ? cc : [];
   const cw = readLS(dom.nsKey('weather2'), null); if (cw?.data) { weather = cw.data; weatherTs = cw.ts; } else { weather = null; weatherTs = null; }
   reglages = dom.currentReglages() || { ...DEFAULTS };
+  dataTs = null; dataOffline = false; weatherOffline = false; // fraîcheur remise à zéro pour ce domicile
 }
 
 async function loadWeather(force = false) {
+  const id = dom.currentId();
   const cacheFresh = weather && Array.isArray(weather.et0) && weatherTs && (Date.now() - weatherTs) < WEATHER_TTL;
   if (!force && cacheFresh) { weatherOffline = false; return; }
   try {
-    weather = await fetchWeatherData(dom.currentLoc());
+    const w = await fetchWeatherData(dom.currentLoc());
+    if (dom.currentId() !== id) return;   // domicile changé pendant le fetch
+    weather = w;
     weatherTs = Date.now();
     weatherOffline = false;
-    writeLS(dom.nsKey('weather2'), { data: weather, ts: weatherTs });
+    writeLS(dom.nsKeyFor(id, 'weather2'), { data: weather, ts: weatherTs });
   } catch (e) {
+    if (dom.currentId() !== id) return;
     weatherOffline = true;
     console.warn('[météo] fetch échoué :', e.message);
   }
@@ -106,10 +111,11 @@ async function syncData() {
     purgeBefore(id, addDays(today, -14)).catch((e) => console.warn('[purge]', e.message));
     purgeContraintesBefore(id, today).catch((e) => console.warn('[purge-contr]', e.message));
     const [arr, contr] = await Promise.all([getArrosages(id), getContraintes(id)]);
+    if (dom.currentId() !== id) return;   // domicile changé pendant le fetch → ne pas polluer l'autre
     arrosages = Array.isArray(arr) ? arr : [];
-    writeLS(dom.nsKey('arrosages'), arrosages);
+    writeLS(dom.nsKeyFor(id, 'arrosages'), arrosages);
     contraintes = Array.isArray(contr) ? contr : [];
-    writeLS(dom.nsKey('contraintes'), contraintes);
+    writeLS(dom.nsKeyFor(id, 'contraintes'), contraintes);
     reglages = dom.currentReglages() || { ...DEFAULTS };
     dataTs = Date.now();
     dataOffline = false;
@@ -359,11 +365,13 @@ function escapeHtml(s) {
 
 // --- Enregistrer un arrosage (Supabase, échec honnête) ----------------
 async function recordArrosage(date, min) {
+  const id = dom.currentId();
   const existing = arrosages.find((r) => r.jour === date);
   const total = (existing?.minutes || 0) + min;
-  const row = await upsertArrosage({ domicileId: dom.currentId(), jour: date, minutes: total, auteur: getPrenom() });
+  const row = await upsertArrosage({ domicileId: id, jour: date, minutes: total, auteur: getPrenom() });
+  if (dom.currentId() !== id) return { total, existed: !!existing }; // domicile changé : écrit en DB, ne pas polluer l'état courant
   arrosages = arrosages.filter((r) => r.jour !== date).concat(row);
-  writeLS(dom.nsKey('arrosages'), arrosages);
+  writeLS(dom.nsKeyFor(id, 'arrosages'), arrosages);
   dataTs = Date.now(); dataOffline = false;
   return { total, existed: !!existing };
 }
@@ -665,6 +673,7 @@ async function doForgot() {
 function initAuthUI() {
   setAuthMode('signin');
   $('auth-submit').addEventListener('click', submitAuth);
+  $('auth-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
   $('auth-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
   $('auth-forgot').addEventListener('click', (e) => { e.preventDefault(); doForgot(); });
   $('btn-signout').addEventListener('click', async () => { await auth.signOut(); location.reload(); });
@@ -865,7 +874,8 @@ async function renderInvitations() {
 }
 
 function inviteUrl(token) {
-  return `${location.origin}${location.pathname}?token=${token}`;
+  // Fragment (#) : jamais envoyé aux serveurs/CDN ni en Referer → pas de fuite du token.
+  return `${location.origin}${location.pathname}#token=${token}`;
 }
 async function generateInvite() {
   const btn = $('btn-gen-invite'); btn.disabled = true;
@@ -899,31 +909,35 @@ function initDomicileUI() {
   $('btn-share').addEventListener('click', openShare);
   $('share-close').addEventListener('click', closeShare);
   $('btn-gen-invite').addEventListener('click', generateInvite);
-  $('share-copy').addEventListener('click', () => { const t = new URL($('share-link').value).searchParams.get('token'); if (t) copyInviteLink(t); });
+  $('share-copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('share-link').value); toast('🔗 Lien copié'); } catch {} });
 }
 
 // Après connexion : traite un lien d'invitation en attente, charge les domiciles.
 function pendingInviteToken() {
-  const u = new URL(location.href);
-  return u.searchParams.get('token');
+  const fromHash = new URLSearchParams(location.hash.replace(/^#/, '')).get('token');
+  return fromHash || new URL(location.href).searchParams.get('token'); // rétro-compat anciens liens ?token=
 }
 function clearInviteToken() {
   const u = new URL(location.href);
   u.searchParams.delete('token');
-  history.replaceState(null, '', u.pathname + (u.search || '') + u.hash);
+  const hp = new URLSearchParams(u.hash.replace(/^#/, '')); hp.delete('token');
+  const hash = hp.toString() ? '#' + hp.toString() : '';
+  history.replaceState(null, '', u.pathname + (u.search || '') + hash);
 }
 
 async function enterApp(user) {
   dom.setUser(user.id);
   hideAuth();
   // Invitation en attente ?
+  let joinedId = null;
   const token = pendingInviteToken();
   if (token) {
-    try { await acceptInvitation(token); toast('✓ Tu as rejoint un domicile partagé'); }
+    try { const j = await acceptInvitation(token); joinedId = Array.isArray(j) ? j[0]?.domicile_id : j?.domicile_id; toast('✓ Tu as rejoint un domicile partagé'); }
     catch (e) { toast('Invitation : ' + e.message); }
     clearInviteToken();
   }
   await refreshDomiciles();
+  if (joinedId) { dom.setCurrent(joinedId); renderDomicileSelector(); } // sélectionner le domicile rejoint
   if (!dom.getDomiciles().length) {
     // Aucun domicile → invite à en créer un.
     openDomicileForm();
@@ -1065,8 +1079,9 @@ async function init() {
   initDomicileUI();
 
   // Réagit aux changements de session (connexion, refresh, déconnexion).
-  auth.onAuthChange((event, session) => {
-    if (event === 'SIGNED_OUT') { showAuth(); }
+  auth.onAuthChange((event) => {
+    // Reset COMPLET de l'état à la déconnexion (pas de fuite de données/chat entre comptes).
+    if (event === 'SIGNED_OUT') location.reload();
   });
 
   const session = await auth.getSession();
