@@ -132,6 +132,8 @@ export function effConstants(canicule) {
 // today     : 'YYYY-MM-DD' (date locale Europe/Zurich, fournie par l'appelant)
 export function computeMetrics({ weather, arrosages, reglages, today }) {
   const r = { ...DEFAULTS, ...(reglages || {}) };
+  // Garde débit : ≤ 0 ou non fini → division par zéro / déficit gonflé. Repli sûr.
+  r.debit_mm_h = Number(r.debit_mm_h) > 0 ? Number(r.debit_mm_h) : DEFAULTS.debit_mm_h;
   const times = weather?.time || [];
   const precip = weather?.precipitation_sum || [];
   const idx = findTodayIdx(times, today);
@@ -284,7 +286,8 @@ function baseDecide(input) {
   const minutes = mmToMin(session_mm);
   let deuxieme = null;
   if (m.deficit > C.MAX_SESSION_MM) {
-    const reste_mm = m.deficit - session_mm;
+    // Plafonner la 2e session aussi (sinon jusqu'à ~35 mm d'un coup → ruissellement).
+    const reste_mm = Math.min(m.deficit - session_mm, C.MAX_SESSION_MM);
     deuxieme = {
       jour: addDays(m.today, C.SPACING_DAYS),
       mm: reste_mm,
@@ -327,20 +330,33 @@ function withContraintes(base, input) {
     // ⚠️ La pluie prévue APRÈS le retour ne compte pas : elle n'aide pas le
     // jardin pendant l'absence — on la neutralise avant de projeter le déficit.
     const tFin = parseISO(leaving.fin);
-    const precipTrunc = (input.weather?.precipitation_sum || []).map((v, i) => {
-      const t = input.weather?.time?.[i];
-      return t && parseISO(t) > tFin ? 0 : v;
+    const times = input.weather?.time || [];
+    const precip = input.weather?.precipitation_sum || [];
+    const probs = input.weather?.precipitation_probability_max || [];
+    const idxNow = findTodayIdx(times, today);
+    // Confiance d'un jour : passé/aujourd'hui = 100 % (réel) ; futur = sa probabilité.
+    // Même prudence que le moteur : une pluie annoncée peu probable pendant l'absence
+    // ne doit PAS supprimer l'arrosage avant départ (fenêtre non rattrapable).
+    const conf = (i) => {
+      if (i <= idxNow) return 1;
+      const p = probs[i];
+      return (typeof p === 'number' && Number.isFinite(p)) ? Math.max(0, Math.min(1, p / 100)) : 1;
+    };
+    // Pluie PENDANT l'absence : pondérée. Pluie APRÈS le retour : ne compte pas.
+    const precipTrunc = precip.map((v, i) => {
+      const t = times[i];
+      if (t && parseISO(t) > tFin) return 0;
+      if (typeof v !== 'number' || !Number.isFinite(v)) return v;
+      return v * conf(i);
     });
     const mFin = computeMetrics({ ...input, weather: { ...input.weather, precipitation_sum: precipTrunc }, today: leaving.fin });
     const defFin = mFin.ok ? mFin.deficit : 0;
-    const times = input.weather?.time || [];
-    const precip = input.weather?.precipitation_sum || [];
     let rainAbs = 0;
     for (let i = 0; i < times.length; i++) {
       const t = parseISO(times[i]);
-      if (t >= parseISO(leaving.debut) && t <= parseISO(leaving.fin)) {
+      if (t >= parseISO(leaving.debut) && t <= tFin) {
         const v = precip[i];
-        if (typeof v === 'number' && Number.isFinite(v)) rainAbs += v;
+        if (typeof v === 'number' && Number.isFinite(v)) rainAbs += v * conf(i);
       }
     }
     if (defFin >= C.MIN_SESSION_MM && rainAbs < C.RAIN_SOON_MM) {

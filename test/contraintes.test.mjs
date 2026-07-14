@@ -7,7 +7,9 @@ const ck = (n, c, d = '') => { if (c) { pass++; console.log(`  ✅ ${n}`); } els
 const TIMES = ['2026-07-03','2026-07-04','2026-07-05','2026-07-06','2026-07-07','2026-07-08','2026-07-09','2026-07-10','2026-07-11','2026-07-12','2026-07-13','2026-07-14'];
 const REG = { objectif_mm: 28, debit_mm_h: 27 };
 const z = () => Array(12).fill(0);
-const W = (p) => ({ time: TIMES, precipitation_sum: p || z(), precipitation_probability_max: z() });
+// Proba par défaut = 100 % : les scénarios « la pluie couvre » veulent une pluie
+// CERTAINE (leur intention), pas une pluie à 0 % que le moteur ignore désormais.
+const W = (p) => ({ time: TIMES, precipitation_sum: p || z(), precipitation_probability_max: z().map(() => 100) });
 // Absence : part demain (11), revient le 13.
 const ABS = [{ type: 'absence', debut: '2026-07-11', fin: '2026-07-13' }];
 
