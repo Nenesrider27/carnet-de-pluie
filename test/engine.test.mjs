@@ -15,8 +15,11 @@ const TIMES = ['2026-07-02','2026-07-03','2026-07-04','2026-07-05','2026-07-06',
                '2026-07-12','2026-07-13'];
 const TODAY = '2026-07-09';
 const zeros = () => Array(12).fill(0);
+// Par défaut, la pluie prévue est CERTAINE (100 %) : les scénarios historiques
+// ont été écrits quand la probabilité était ignorée (= pleinement comptée).
+const hundreds = () => Array(12).fill(100);
 function weather(precip, prob) {
-  return { time: TIMES, precipitation_sum: precip, precipitation_probability_max: prob || zeros() };
+  return { time: TIMES, precipitation_sum: precip, precipitation_probability_max: prob || hundreds() };
 }
 const REG = { objectif_mm: 28, debit_mm_h: 27 };
 
@@ -32,8 +35,9 @@ console.log('\n=== MOTEUR DE DÉCISION — SCÉNARIOS DU PLAN ===\n');
 }
 
 // -- Scénario 2 : déficit > 0 mais 8 mm de pluie demain → « La pluie s'en charge »
+// (eau récente hier pour que le filet ne se déclenche pas : on isole la règle pluie)
 {
-  const p = zeros(); p[8] = 8; // 8 mm demain (07-10)
+  const p = zeros(); p[6] = 6; p[8] = 8; // 6 mm hier (eau réelle), 8 mm demain (07-10)
   const d = decide({ weather: weather(p), arrosages: [], reglages: REG, today: TODAY });
   console.log(`Scénario 2 (8mm demain)      : etat=${d.etat}, pluie_48h=${d.metrics.pluie_48h}, déficit=${d.metrics.deficit}`);
   check('S2 → pluie', d.etat === 'pluie', d.etat);

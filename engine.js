@@ -19,6 +19,7 @@ export const CONSTANTS = {
   SPACING_DAYS: 3,    // été : sessions profondes ~2x/semaine
   RAIN_SOON_MM: 5,    // pluie >= 5 mm sous 48 h -> laisser faire la pluie
   SIGNIF_MM: 8,       // arrosage « significatif » (équiv. mm) pour l'espacement
+  MAX_DRY_DAYS: 3,    // filet : au-delà, on n'attend plus la pluie annoncée
 };
 
 // --- Réglages par défaut (surchargés par la table `reglages`) -----------
@@ -120,7 +121,7 @@ export function computeObjectif({ weather, reglages, today }) {
 // Constantes horticoles resserrées en canicule (rendues visibles dans l'UI).
 export function effConstants(canicule) {
   return canicule
-    ? { ...CONSTANTS, SPACING_DAYS: 2, MIN_SESSION_MM: 8 } // MAX reste 20 (ruissellement)
+    ? { ...CONSTANTS, SPACING_DAYS: 2, MIN_SESSION_MM: 8, MAX_DRY_DAYS: 2 } // MAX reste 20 (ruissellement)
     : CONSTANTS;
 }
 
@@ -139,10 +140,22 @@ export function computeMetrics({ weather, arrosages, reglages, today }) {
     return { ok: false, idx: -1, today, reglages: r };
   }
 
-  // Pluie (mm)
-  const pluie_recue = sumRange(precip, idx - 6, idx);      // 7 j, aujourd'hui inclus
-  const pluie_prevue = sumRange(precip, idx + 1, idx + 3); // 3 prochains jours
-  const pluie_48h = sumRange(precip, idx + 1, idx + 2);    // 2 prochains jours
+  // Pluie (mm). Le PASSÉ + aujourd'hui (index ≤ idx) est du RÉEL → compté à 100 %.
+  // Le FUTUR (index > idx) est PONDÉRÉ par sa probabilité : une pluie annoncée mais
+  // peu probable compte moins (on ne parie pas dessus). Proba manquante → 100 % (repli).
+  const probs = weather?.precipitation_probability_max || [];
+  const precipEff = precip.map((v, i) => {
+    if (i <= idx) return v;                                   // réel
+    if (typeof v !== 'number' || !Number.isFinite(v)) return v;
+    const p = probs[i];
+    const conf = (typeof p === 'number' && Number.isFinite(p)) ? Math.max(0, Math.min(1, p / 100)) : 1;
+    return v * conf;                                          // pondéré
+  });
+  const pluie_recue = sumRange(precip, idx - 6, idx);          // 7 j réels, aujourd'hui inclus
+  const pluie_prevue = sumRange(precipEff, idx + 1, idx + 3);  // 3 j prévus, PONDÉRÉS
+  const pluie_48h = sumRange(precipEff, idx + 1, idx + 2);     // 2 j prévus, PONDÉRÉS
+  const pluie_prevue_brute = sumRange(precip, idx + 1, idx + 3); // valeurs brutes (transparence)
+  const pluie_48h_brute = sumRange(precip, idx + 1, idx + 2);
 
   // Arrosage : agrège les minutes par jour, puis somme sur les 7 derniers jours.
   const byDay = {};
@@ -180,6 +193,18 @@ export function computeMetrics({ weather, arrosages, reglages, today }) {
     }
   }
 
+  // Filet : jours depuis le dernier apport d'eau SÉRIEUX RÉEL (≤ aujourd'hui) —
+  // pluie TOMBÉE ≥ RAIN_SOON_MM, ou arrosage sérieux. La pluie PRÉVUE ne compte pas
+  // (elle n'est pas tombée). 99 si aucune eau sérieuse sur la fenêtre.
+  let lastWaterISO = lastSignif ? lastSignif.jour : null;
+  for (let i = Math.max(0, idx - 13); i <= idx; i++) {
+    const v = precip[i];
+    if (typeof v === 'number' && Number.isFinite(v) && v >= CONSTANTS.RAIN_SOON_MM && times[i]) {
+      if (!lastWaterISO || times[i] > lastWaterISO) lastWaterISO = times[i];
+    }
+  }
+  const dryDays = lastWaterISO ? diffDays(today, lastWaterISO) : 99;
+
   return {
     ok: true,
     idx,
@@ -187,6 +212,9 @@ export function computeMetrics({ weather, arrosages, reglages, today }) {
     pluie_recue,
     pluie_prevue,
     pluie_48h,
+    pluie_prevue_brute,
+    pluie_48h_brute,
+    dryDays,
     minutes7,
     arrose_mm,
     deficit,
@@ -213,6 +241,10 @@ function baseDecide(input) {
   }
   const C = effConstants(m.canicule); // 3→2 j d'espacement, MIN 10→8 mm en canicule
 
+  // Filet de sécurité : trop longtemps sans eau réelle + déficit réel → on n'attend
+  // plus la pluie annoncée (même très probable : elle peut ne pas tomber).
+  const filet = m.dryDays >= C.MAX_DRY_DAYS && m.deficit >= C.MIN_SESSION_MM;
+
   const mmToMin = (mm) => Math.round((mm / r.debit_mm_h) * 60);
   const base = { metrics: m };
 
@@ -221,8 +253,9 @@ function baseDecide(input) {
     return { ...base, etat: 'rien' };
   }
 
-  // Règle 2 — pluie imminente (>= RAIN_SOON_MM sous 48 h)
-  if (m.pluie_48h >= C.RAIN_SOON_MM) {
+  // Règle 2 — pluie imminente probable (>= RAIN_SOON_MM pondéré sous 48 h),
+  // SAUF si le filet impose d'arroser (trop longtemps sans eau réelle).
+  if (!filet && m.pluie_48h >= C.RAIN_SOON_MM) {
     return { ...base, etat: 'pluie' };
   }
 
@@ -258,7 +291,7 @@ function baseDecide(input) {
       minutes: mmToMin(reste_mm),
     };
   }
-  return { ...base, etat: 'arroser', session_mm, minutes, deuxieme };
+  return { ...base, etat: 'arroser', session_mm, minutes, deuxieme, filet };
 }
 
 // --- Couche « contraintes » : absences (père/fils au même jardin) -------

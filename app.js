@@ -211,6 +211,13 @@ function renderVerdict(d, reg) {
     title = `Arroser <span class="acc--big">${d.minutes} min</span>`;
     subtitle = `Session de ${round1(d.session_mm)} mm, au débit de ${reg.debit_mm_h} mm/h.`;
     why = `Il manque ${round1(m.deficit)} mm pour l'objectif de ${m.objectif} mm cette semaine.`;
+    // Transparence : pourquoi on arrose malgré une éventuelle pluie annoncée.
+    if (d.filet) {
+      const dry = m.dryDays >= 99 ? 'Pas d\'eau récente' : `${m.dryDays} jour${m.dryDays > 1 ? 's' : ''} sans eau`;
+      why += ` ${dry} — on n'attend plus la pluie annoncée (elle pourrait ne pas tomber).`;
+    } else if (m.pluie_prevue_brute >= CONSTANTS.RAIN_SOON_MM && m.pluie_prevue < m.pluie_prevue_brute * 0.6) {
+      why += ` Pluie annoncée (${round1(m.pluie_prevue_brute)} mm) mais peu probable — pas prise en compte.`;
+    }
     if (d.deuxieme) {
       $('v-second').hidden = false;
       $('v-second').textContent = `↳ puis ~${d.deuxieme.minutes} min vers ${fmtShort(d.deuxieme.jour)} (déficit > ${CONSTANTS.MAX_SESSION_MM} mm, on fractionne).`;

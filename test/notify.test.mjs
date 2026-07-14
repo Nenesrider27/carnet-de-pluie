@@ -9,7 +9,8 @@ const TIMES = ['2026-07-02','2026-07-03','2026-07-04','2026-07-05','2026-07-06',
 const TODAY = '2026-07-09';
 const REG = { objectif_mm: 28, debit_mm_h: 27 };
 const z = () => Array(12).fill(0);
-const W = (p) => ({ time: TIMES, precipitation_sum: p, precipitation_probability_max: z() });
+const h = () => Array(12).fill(100); // pluie prévue CERTAINE par défaut (100 %)
+const W = (p, prob) => ({ time: TIMES, precipitation_sum: p, precipitation_probability_max: prob || h() });
 
 console.log('\n=== LOGIQUE DE NOTIFICATION MATINALE ===\n');
 
@@ -22,8 +23,9 @@ console.log('\n=== LOGIQUE DE NOTIFICATION MATINALE ===\n');
 }
 
 // PLUIE alors qu'un arrosage aurait été dû (8mm demain, sinon sec) → push
+// (6 mm hier = eau récente réelle → le filet ne se déclenche pas, on teste la règle pluie)
 {
-  const p = z(); p[8] = 8;
+  const p = z(); p[6] = 6; p[8] = 8;
   const n = planNotification({ weather: W(p), arrosages: [], reglages: REG, today: TODAY });
   ck('PLUIE (besoin réel) → push', n.push && n.etat === 'pluie', JSON.stringify(n));
   ck('PLUIE titre = "La pluie s\'en charge"', /La pluie s'en charge/.test(n.title), n.title);
