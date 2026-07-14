@@ -236,6 +236,43 @@
       <div class="df-results" id="df-results"></div>
       <div class="df-coords" id="df-coords"></div>
       <p class="df-attrib">Géocodage&nbsp;: Open-Meteo · © OpenStreetMap</p>
+
+      <!-- Débit d'arrosage : LE paramètre qui traduit les minutes en mm. -->
+      <div class="df-debit">
+        <label class="df-debit-label">Débit d'arrosage <span>— combien d'eau ton système apporte</span></label>
+        <div class="seg" id="debit-seg">
+          <button type="button" class="seg-btn on" data-debit-mode="type">Par type</button>
+          <button type="button" class="seg-btn" data-debit-mode="mesure">Le mesurer</button>
+          <button type="button" class="seg-btn" data-debit-mode="connu">Je le connais</button>
+        </div>
+
+        <div class="debit-panel" data-panel="type">
+          <select id="df-debit-type">
+            <option value="15">Arroseur oscillant / tuyau-arroseur — ~15 mm/h</option>
+            <option value="30">Asperseurs pop-up / micro-asperseurs — ~30 mm/h</option>
+            <option value="12">Tourniquet / impact (rotatif) — ~12 mm/h</option>
+          </select>
+          <p class="df-hint">Valeurs approximatives. Pour être précis, mesure (onglet « Le mesurer »).</p>
+        </div>
+
+        <div class="debit-panel" data-panel="mesure" hidden>
+          <p class="df-hint">Pose une boîte de conserve (bord droit) dans la zone arrosée, lance l'arrosage quelques minutes, mesure la hauteur d'eau au fond.</p>
+          <div class="df-row">
+            <input type="number" id="df-mes-mm" placeholder="hauteur (mm)" min="1" step="0.5" inputmode="decimal" />
+            <input type="number" id="df-mes-min" placeholder="durée (min)" min="1" step="1" inputmode="numeric" />
+          </div>
+        </div>
+
+        <div class="debit-panel" data-panel="connu" hidden>
+          <div class="df-row df-row-unit">
+            <input type="number" id="df-debit-val" placeholder="ex. 20" min="1" max="120" step="1" inputmode="numeric" />
+            <span class="df-unit">mm/h</span>
+          </div>
+        </div>
+
+        <p class="df-debit-summary" id="df-debit-summary">Débit retenu : <b>15 mm/h</b></p>
+      </div>
+
       <div class="df-error" id="df-error" role="alert"></div>
       <div class="sheet-actions">
         <button class="btn-primary" id="df-save" type="button">Créer le domicile</button>

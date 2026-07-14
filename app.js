@@ -703,9 +703,44 @@ function openDomicileForm() {
   $('df-coords').textContent = '';
   $('df-error').textContent = '';
   picked = null;
+  resetDebit();
   setTimeout(() => $('df-nom').focus(), 60);
 }
 function closeDomicileForm() { $('domicile-form').hidden = true; }
+
+// --- Débit d'arrosage (mm/h) : 3 chemins (type / mesure / connu) ---------
+let debitMode = 'type';
+function setDebitMode(mode) {
+  debitMode = mode;
+  document.querySelectorAll('#debit-seg .seg-btn').forEach((b) => b.classList.toggle('on', b.dataset.debitMode === mode));
+  document.querySelectorAll('.debit-panel').forEach((p) => { p.hidden = p.dataset.panel !== mode; });
+  refreshDebit();
+}
+// Débit résultant du chemin actif (null si l'utilisateur doit encore renseigner).
+function computeDebit() {
+  if (debitMode === 'connu') {
+    const v = parseFloat($('df-debit-val').value);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+  }
+  if (debitMode === 'mesure') {
+    const mm = parseFloat($('df-mes-mm').value), min = parseFloat($('df-mes-min').value);
+    if (Number.isFinite(mm) && mm > 0 && Number.isFinite(min) && min > 0) return Math.round((mm / min) * 60);
+    return null;
+  }
+  const v = parseFloat($('df-debit-type').value); // type : toujours une valeur
+  return Number.isFinite(v) ? v : 15;
+}
+function refreshDebit() {
+  const d = computeDebit();
+  const el = $('df-debit-summary');
+  if (el) el.innerHTML = d ? `Débit retenu : <b>${d} mm/h</b>` : 'Débit retenu : <b>—</b> (renseigne une valeur)';
+}
+function resetDebit() {
+  setDebitMode('type');
+  $('df-debit-type').value = '15';
+  $('df-mes-mm').value = ''; $('df-mes-min').value = ''; $('df-debit-val').value = '';
+  refreshDebit();
+}
 
 async function searchAddress() {
   const q = $('df-adresse').value.trim();
@@ -748,12 +783,15 @@ async function saveDomicile() {
   const err = $('df-error');
   if (!nom) { err.textContent = 'Donne un nom à ce domicile.'; return; }
   if (!picked) { err.textContent = 'Choisis un emplacement (adresse ou « ma position »).'; return; }
+  const debit = computeDebit();
+  if (!debit) { err.textContent = 'Renseigne le débit d\'arrosage (ou choisis un type).'; return; }
   const btn = $('df-save'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Création…';
   err.textContent = '';
   try {
     const created = await createDomicile({
       ownerId: dom.getUserId(), nom, adresse: picked.label,
       lat: picked.lat, lon: picked.lon, timezone: picked.timezone,
+      debit_mm_h: debit,
     });
     await refreshDomiciles();
     dom.setCurrent(created.id);
@@ -847,6 +885,10 @@ function initDomicileUI() {
   $('df-mypos').addEventListener('click', useMyPosition);
   $('df-save').addEventListener('click', saveDomicile);
   $('df-cancel').addEventListener('click', closeDomicileForm);
+  // Débit d'arrosage : segmented control + recalcul en direct.
+  document.querySelectorAll('#debit-seg .seg-btn').forEach((b) => b.addEventListener('click', () => setDebitMode(b.dataset.debitMode)));
+  $('df-debit-type').addEventListener('change', refreshDebit);
+  ['df-mes-mm', 'df-mes-min', 'df-debit-val'].forEach((id) => $(id).addEventListener('input', refreshDebit));
   $('btn-share').addEventListener('click', openShare);
   $('share-close').addEventListener('click', closeShare);
   $('btn-gen-invite').addEventListener('click', generateInvite);

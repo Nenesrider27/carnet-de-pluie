@@ -855,6 +855,33 @@ footer {
 .link-btn { background: transparent; color: var(--amber); border: none; padding: 4px 6px; font-size: .82rem; font-weight: 500; }
 .link-btn:hover { text-decoration: underline; }
 
+/* Débit d'arrosage à la création d'un domicile (type / mesure / connu) */
+.df-debit { margin-top: 18px; }
+.df-debit-label {
+  display: block; font-family: var(--font-mono); font-size: .72rem; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--ink-faint); margin-bottom: 8px;
+}
+.df-debit-label span { text-transform: none; letter-spacing: 0; font-size: .74rem; opacity: .75; }
+.seg {
+  display: flex; gap: 4px; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 10px; padding: 3px; margin-bottom: 10px;
+}
+.seg-btn {
+  flex: 1 1 0; min-width: 0; padding: 8px 6px; font-size: .82rem; font-weight: 500;
+  background: transparent; color: var(--ink-dim); border-radius: 7px; border: none;
+}
+.seg-btn.on { background: var(--surface-2); color: var(--ink); }
+.debit-panel select {
+  width: 100%; font-family: var(--font-mono); font-size: .9rem; color: var(--ink);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+  padding: 11px 12px; min-height: 44px; -webkit-appearance: none; appearance: none;
+}
+.df-row-unit { align-items: center; }
+.df-row-unit input { flex: 0 0 auto; width: 120px; }
+.df-unit { font-family: var(--font-mono); font-size: .85rem; color: var(--ink-faint); }
+.df-debit-summary { margin-top: 10px; font-size: .9rem; color: var(--ink-dim); }
+.df-debit-summary b { color: var(--amber); font-family: var(--font-mono); }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
