@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0E141A" />
   <meta name="color-scheme" content="dark" />
+  <!-- Ne jamais fuiter l'URL (dont un éventuel #token d'invitation) en Referer. -->
+  <meta name="referrer" content="no-referrer" />
   <title>Carnet de pluie</title>
 
   <!-- PWA -->
@@ -74,7 +76,7 @@
     <details id="chat-details">
       <summary>💬 Assistant — absences, questions</summary>
       <div class="details-body">
-        <div class="chat-log" id="chat-log">
+        <div class="chat-log" id="chat-log" aria-live="polite">
           <div class="chat-msg bot">Dis-moi si tu pars (« absent vendredi 17h à dimanche 23h ») et j'adapte la reco à ton absence. Ou pose-moi une question sur l'arrosage.</div>
         </div>
         <div class="chat-input-row">
@@ -153,6 +155,9 @@
           <button class="btn-primary" id="btn-push" style="width:100%">🔔 Activer les notifications</button>
           <p class="hint" id="push-hint">Rappel le matin quand il faut arroser. À activer séparément sur chaque téléphone.</p>
         </div>
+        <div class="setting" id="install-hint" hidden>
+          <p class="hint">📲 Pour l'installer comme une app (et recevoir les rappels)&nbsp;: ouvre ce lien dans <b>Safari</b> → bouton <b>Partager</b> → <b>«&nbsp;Sur l'écran d'accueil&nbsp;»</b>.</p>
+        </div>
         <div class="setting">
           <div class="field">
             <label for="in-prenom">Ton prénom (auteur des arrosages)</label>
@@ -196,9 +201,9 @@
   </main>
 
   <!-- Écran de connexion / inscription -->
-  <div class="auth-overlay" id="auth" hidden>
+  <div class="auth-overlay" id="auth" role="dialog" aria-modal="true" aria-labelledby="auth-title" hidden>
     <div class="auth-card">
-      <div class="onboard-icon">💧</div>
+      <div class="onboard-icon" aria-hidden="true">💧</div>
       <h2 id="auth-title">Connexion</h2>
       <p class="auth-sub">Ton carnet d'arrosage intelligent. Un compte, un ou plusieurs domiciles, partagés avec qui tu veux.</p>
       <div class="field">
@@ -217,9 +222,9 @@
   </div>
 
   <!-- Feuille : ajouter / configurer un domicile -->
-  <div class="sheet" id="domicile-form" hidden>
+  <div class="sheet" id="domicile-form" role="dialog" aria-modal="true" aria-labelledby="df-title" hidden>
     <div class="sheet-card">
-      <h2>Nouveau domicile</h2>
+      <h2 id="df-title">Nouveau domicile</h2>
       <div class="field">
         <label for="df-nom">Nom du domicile</label>
         <input type="text" id="df-nom" maxlength="40" placeholder="ex. Île de Ré" />
@@ -281,9 +286,9 @@
   </div>
 
   <!-- Feuille : partage du domicile -->
-  <div class="sheet" id="share-panel" hidden>
+  <div class="sheet" id="share-panel" role="dialog" aria-modal="true" aria-labelledby="share-title" hidden>
     <div class="sheet-card">
-      <h2>Partager ce domicile</h2>
+      <h2 id="share-title">Partager ce domicile</h2>
       <p class="hint">Génère un lien&nbsp;: la personne crée un compte (ou se connecte) et rejoint ce domicile. Les données d'arrosage sont communes. Lien révocable, valable 7&nbsp;jours.</p>
       <button class="btn-primary" id="btn-gen-invite" type="button" style="width:100%">🔗 Générer un lien d'invitation</button>
       <div class="share-link-box" id="share-link-box" hidden>
@@ -300,47 +305,12 @@
     </div>
   </div>
 
-  <!-- Onboarding (1er lancement) -->
-  <div class="onboard" id="onboard" hidden>
-    <div class="onboard-inner">
-      <div class="onboard-slide" data-slide="0">
-        <div class="onboard-icon">💧</div>
-        <h2>Carnet de pluie</h2>
-        <p>Ton jardin à Anières, arrosé au bon moment. Chaque jour, l'app te dit <b>s'il faut arroser et combien de minutes</b>, d'après la vraie météo MétéoSuisse.</p>
-        <div class="field">
-          <label for="ob-prenom">Ton prénom</label>
-          <input type="text" id="ob-prenom" maxlength="20" placeholder="ex. Ernest" />
-        </div>
-        <p class="onboard-hint">Il apparaîtra dans l'historique partagé avec l'autre jardinier.</p>
-      </div>
-      <div class="onboard-slide" data-slide="1" hidden>
-        <div class="onboard-icon">🪴</div>
-        <h2>Une seule chose à lire</h2>
-        <p>La grande carte en haut donne la reco du jour&nbsp;: <b>💧&nbsp;Arroser</b>, <b>🌧️&nbsp;La pluie s'en charge</b>, <b>⏳&nbsp;Attends</b> ou <b>✅&nbsp;Rien à faire</b> — toujours avec le <i>pourquoi</i>.</p>
-        <p>Quand c'est «&nbsp;Arroser&nbsp;», lance le <b>chrono</b> ou tape <b>«&nbsp;C'est fait&nbsp;»</b>&nbsp;: ça s'enregistre pour vous deux.</p>
-      </div>
-      <div class="onboard-slide" data-slide="2" hidden>
-        <div class="onboard-icon">📲</div>
-        <h2>Ajoute-la à l'écran d'accueil</h2>
-        <p>Pour l'avoir comme une vraie app (et recevoir les rappels du matin)&nbsp;:</p>
-        <ol>
-          <li>Ouvre ce lien dans <b>Safari</b></li>
-          <li>Touche <b>Partager</b> (le carré avec la flèche ⬆️)</li>
-          <li><b>«&nbsp;Sur l'écran d'accueil&nbsp;»</b> → <b>Ajouter</b></li>
-        </ol>
-      </div>
-      <div class="onboard-nav">
-        <div class="onboard-dots" id="onboard-dots"></div>
-        <button class="btn-primary" id="onboard-next">Continuer</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Toast de confirmation -->
-  <div class="toast" id="toast" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
   <!-- Chrono plein écran -->
-  <div class="chrono" id="chrono" hidden>
+  <div class="chrono" id="chrono" role="dialog" aria-modal="true" aria-labelledby="chrono-label" hidden>
     <div class="chrono-inner">
       <div class="chrono-label" id="chrono-label">Arrosage en cours</div>
       <div class="chrono-time" id="chrono-time">00:00</div>

@@ -181,6 +181,11 @@ function render() {
       renderClimateBanner(decision.metrics);
     }
   }
+  if (dataOffline) {
+    const ne = $('notice-error');
+    ne.textContent = 'Synchro impossible — l\'historique affiché n\'est peut-être pas à jour.';
+    ne.classList.add('show');
+  }
   renderWeek();
   renderLog();
   renderGauge();
@@ -676,7 +681,7 @@ function initAuthUI() {
   $('auth-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
   $('auth-pass').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitAuth(); });
   $('auth-forgot').addEventListener('click', (e) => { e.preventDefault(); doForgot(); });
-  $('btn-signout').addEventListener('click', async () => { await auth.signOut(); location.reload(); });
+  $('btn-signout').addEventListener('click', async () => { if (!confirm('Se déconnecter ?')) return; await auth.signOut(); }); // reload via onAuthChange(SIGNED_OUT)
 }
 
 // =====================================================================
@@ -720,6 +725,8 @@ function openDomicileForm() {
   $('df-error').textContent = '';
   picked = null;
   resetDebit();
+  // 1er domicile : pas de « Annuler » (rien où revenir → écran cassé sinon).
+  $('df-cancel').hidden = dom.getDomiciles().length === 0;
   setTimeout(() => $('df-nom').focus(), 60);
 }
 function closeDomicileForm() { $('domicile-form').hidden = true; }
@@ -912,6 +919,21 @@ function initDomicileUI() {
   $('share-copy').addEventListener('click', async () => { try { await navigator.clipboard.writeText($('share-link').value); toast('🔗 Lien copié'); } catch {} });
 }
 
+// Accessibilité des modales : verrou de scroll (auto via observer), Escape, clic sur le fond.
+function initModals() {
+  const ids = ['auth', 'domicile-form', 'share-panel', 'chrono'];
+  const syncLock = () => { document.body.classList.toggle('no-scroll', ids.some((id) => $(id) && !$(id).hidden)); };
+  const obs = new MutationObserver(syncLock);
+  ids.forEach((id) => { const el = $(id); if (el) obs.observe(el, { attributes: true, attributeFilter: ['hidden'] }); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;                       // l'écran de login est un gate → pas d'Escape
+    if (!$('share-panel').hidden) closeShare();
+    else if (!$('domicile-form').hidden && dom.getDomiciles().length) closeDomicileForm();
+  });
+  $('share-panel').addEventListener('click', (e) => { if (e.target === $('share-panel')) closeShare(); });
+  $('domicile-form').addEventListener('click', (e) => { if (e.target === $('domicile-form') && dom.getDomiciles().length) closeDomicileForm(); });
+}
+
 // Après connexion : traite un lien d'invitation en attente, charge les domiciles.
 function pendingInviteToken() {
   const fromHash = new URLSearchParams(location.hash.replace(/^#/, '')).get('token');
@@ -1077,6 +1099,7 @@ async function init() {
   initForm();
   initAuthUI();
   initDomicileUI();
+  initModals();
 
   // Réagit aux changements de session (connexion, refresh, déconnexion).
   auth.onAuthChange((event) => {
@@ -1123,6 +1146,7 @@ function urlBase64ToUint8Array(base64) {
 }
 
 function initPush() {
+  const ih = $('install-hint'); if (ih) ih.hidden = isStandalone(); // « ajouter à l'écran d'accueil » si pas installé
   const box = $('push-setting');
   const btn = $('btn-push');
   const hint = $('push-hint');

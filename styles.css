@@ -402,7 +402,7 @@ input[type="date"], input[type="number"], input[type="text"] {
   -webkit-appearance: none;
   appearance: none;
 }
-input:focus-visible {
+input:focus-visible, select:focus-visible {
   outline: 2px solid var(--amber);
   outline-offset: 1px;
   border-color: transparent;
@@ -757,11 +757,11 @@ footer {
   font-family: var(--font-mono); font-size: .8rem; color: var(--ink);
   background: var(--surface-2); border: 1px solid var(--line);
   border-radius: 999px; padding: 7px 12px; max-width: 48vw;
-  -webkit-appearance: none; appearance: none; cursor: pointer; min-height: 38px;
+  -webkit-appearance: none; appearance: none; cursor: pointer; min-height: 44px;
 }
 .icon-btn {
   background: transparent; color: var(--ink-faint); border: 1px solid var(--line);
-  border-radius: 999px; width: 38px; height: 38px; padding: 0;
+  border-radius: 999px; width: 44px; height: 44px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center; font-size: 1.05rem;
 }
 .icon-btn:hover { color: var(--ink); background: rgba(255,255,255,.04); }
@@ -852,8 +852,14 @@ footer {
 }
 .share-list li:last-child { border-bottom: none; }
 .share-list .who { color: var(--ink-faint); font-size: .82rem; }
-.link-btn { background: transparent; color: var(--amber); border: none; padding: 4px 6px; font-size: .82rem; font-weight: 500; }
+.link-btn {
+  background: transparent; color: var(--amber); border: none; font-size: .82rem; font-weight: 500;
+  min-height: 44px; padding: 4px 10px; display: inline-flex; align-items: center;
+}
 .link-btn:hover { text-decoration: underline; }
+
+/* Verrou de scroll quand une modale est ouverte (évite le scroll de fond). */
+body.no-scroll { overflow: hidden; }
 
 /* Débit d'arrosage à la création d'un domicile (type / mesure / connu) */
 .df-debit { margin-top: 18px; }
@@ -867,7 +873,7 @@ footer {
   border-radius: 10px; padding: 3px; margin-bottom: 10px;
 }
 .seg-btn {
-  flex: 1 1 0; min-width: 0; padding: 8px 6px; font-size: .82rem; font-weight: 500;
+  flex: 1 1 0; min-width: 0; min-height: 44px; padding: 8px 6px; font-size: .82rem; font-weight: 500;
   background: transparent; color: var(--ink-dim); border-radius: 7px; border: none;
 }
 .seg-btn.on { background: var(--surface-2); color: var(--ink); }

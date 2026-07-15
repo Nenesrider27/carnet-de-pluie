@@ -1,6 +1,6 @@
 // sw.js — service worker : cache hors-ligne de l'app + (étape 4) réception des push.
 // Bump VERSION à chaque déploiement pour invalider l'ancien cache.
-const VERSION = 'cp-v14';
+const VERSION = 'cp-v15';
 
 // Coquille de l'app (même origine) préchargée à l'installation.
 const CORE = [
