@@ -13,7 +13,7 @@
 // ne bloque que les appels navigateur d'autres sites.
 
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
-const MODEL = Deno.env.get('ANTHROPIC_MODEL') || 'claude-opus-4-8';
+const MODEL = Deno.env.get('ANTHROPIC_MODEL') || 'claude-haiku-4-5'; // défaut économe (l'assistant n'a pas besoin d'opus)
 const API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || '';
 
 const ALLOWED_ORIGINS = [
@@ -89,6 +89,25 @@ Deno.serve(async (req: Request) => {
 
   const messages = Array.isArray(body?.messages) ? body.messages : [];
   if (!messages.length) return new Response(JSON.stringify({ error: 'messages manquant' }), { status: 400, headers: cors });
+  // Bornes anti-abus (l'allowlist d'Origin ne protège QUE le navigateur cross-site).
+  if (messages.length > 40) return new Response(JSON.stringify({ error: 'Trop de messages.' }), { status: 400, headers: cors });
+  const totalLen = JSON.stringify(messages).length;
+  if (totalLen > 24000) return new Response(JSON.stringify({ error: 'Requête trop volumineuse.' }), { status: 413, headers: cors });
+
+  // Auth : exiger un JWT utilisateur Supabase valide (le proxy Claude ne doit pas
+  // être ouvert au monde → abus de coût Anthropic). Vérifié via /auth/v1/user.
+  const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
+  const ANON = Deno.env.get('SUPABASE_ANON_KEY') || Deno.env.get('SUPABASE_PUBLISHABLE_KEY') || '';
+  const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (SUPABASE_URL && ANON) {
+    try {
+      const ures = await fetch(`${SUPABASE_URL}/auth/v1/user`, { headers: { apikey: ANON, Authorization: `Bearer ${token}` } });
+      const u = ures.ok ? await ures.json().catch(() => null) : null;
+      if (!u?.id) return new Response(JSON.stringify({ error: 'Connexion requise pour l\'assistant.' }), { status: 401, headers: cors });
+    } catch {
+      return new Response(JSON.stringify({ error: 'Vérification d\'authentification impossible.' }), { status: 503, headers: cors });
+    }
+  }
 
   try {
     const res = await fetch(ANTHROPIC_URL, {
