@@ -8,7 +8,7 @@ import { configureStore, getMyDomiciles, createDomicile, patchDomicile, getMembe
   createInvitation, listInvitations, revokeInvitation, acceptInvitation, removeMember,
   getArrosages, upsertArrosage, purgeBefore, getContraintes, addContrainte, purgeContraintesBefore,
   upsertSubscription } from './store.js';
-import { fetchWeatherData } from './weather.js';
+import { fetchWeatherData, modelLabel } from './weather.js';
 import { VAPID_PUBLIC, CHAT_URL, SUPA_KEY } from './config.js';
 import * as auth from './auth.js';
 import * as dom from './domicile.js';
@@ -157,6 +157,7 @@ function renderClimateBanner(m) {
 function render() {
   const today = todayLocal();
   $('dateToday').textContent = cap(fmtLong(today));
+  const ds = $('data-source'); if (ds) { const loc = dom.currentLoc(); ds.textContent = modelLabel(loc.lat, loc.lon); }
 
   const nOff = $('notice-offline'); nOff.classList.remove('show');
   $('notice-error').classList.remove('show');

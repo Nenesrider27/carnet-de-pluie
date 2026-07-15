@@ -21,6 +21,14 @@ export function pickModel(lat, lon) {
   return 'best_match';                                                                          // ailleurs : au mieux
 }
 
+// Nom lisible du modèle météo réellement utilisé pour ces coordonnées (affichage).
+export function modelLabel(lat, lon) {
+  const m = pickModel(lat, lon);
+  if (m === 'meteoswiss_icon_ch2') return 'MétéoSuisse (ICON-CH2, 2 km)';
+  if (m === 'meteofrance_seamless') return 'Météo-France (AROME)';
+  return 'meilleur modèle local';
+}
+
 function forecastUrl(lat, lon, tz) {
   return `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&daily=precipitation_sum,precipitation_probability_max,temperature_2m_max,et0_fao_evapotranspiration` +
