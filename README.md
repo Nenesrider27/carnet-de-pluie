@@ -1,5 +1,20 @@
 # Carnet de pluie 🌧️💧
 
+## TL;DR (English)
+
+A smart watering dashboard for a hand-watered garden near Geneva, shared by
+two gardeners (father and son). It answers one question, in big letters:
+**should I water today, and for how many minutes?**
+
+- Real weather: MeteoSwiss ICON CH2 model (2 km grid) via Open-Meteo
+- Decision: a 5-rule horticultural engine, single source of truth (`engine.js`)
+- Stack: vanilla HTML/CSS/JS, no framework, Supabase shared database,
+  installable PWA with morning push notifications (GitHub Actions cron + VAPID)
+- 26 engine test assertions, honest test log in TESTS.md
+
+Built entirely with AI tools, no engineer involved.
+
+
 Dashboard d'arrosage intelligent pour un jardin arrosé **à la main** à Anières (GE).
 Il répond à une seule question, en grand : **faut-il arroser aujourd'hui, et combien de minutes ?**
 Conçu pour deux arroseurs (père + fils) partageant le même jardin.
